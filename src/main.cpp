@@ -19,6 +19,7 @@ static AsyncWebServer server(80);
 // Webserver and file system
 #define SPIFFS LittleFS
 #include <LittleFS.h>
+#include <FS.h>
 #include <ArduinoJson.h> // https://github.com/bblanchon/ArduinoJson?utm_source=platformio&utm_medium=piohome
 
 // my wifi secrets
@@ -26,14 +27,14 @@ static AsyncWebServer server(80);
 
 // esp32 native TWAI / CAN library
 #include "driver/twai.h"
-#define TWAI_LOADED 1
 
 // my canbus stuff
 #include "canbus_msg.h"
 #include "canbus_flags.h"
-const uint8_t nodeFeatureMask[2] = {(const uint8_t)NODE_MASK_1, (const uint8_t)NODE_MASK_2}; // node feature mask
 
-#define CAN_MY_IFACE_TYPE SWITCH_BOX_6GANG_LOW // 6 gang switch box, 2 high, 4 low DLC 6
+const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
+
+#define CAN_MY_TYPE BOX_SW_4RELAY // 4 relay switch box
 #define CAN_SELF_MSG 1
 
 // Pins used to connect to CAN bus transceiver:
@@ -65,20 +66,15 @@ volatile uint8_t switchStatus[16];
 
 #define AP_SSID  "cancontrol"
 
-// interrupt stuff
-hw_timer_t *Timer0_Cfg = NULL;
- 
-const char* ssid = SECRET_SSID;
+const char* ssid     = SECRET_SSID;
 const char* password = SECRET_PSK;
-const char* hostname =AP_SSID;
+const char* hostname = AP_SSID;
 
 // CanFrame rxFrame;
 
 volatile int i=4;
 volatile bool isrFlag=false;
 volatile bool ipaddFlag=true;
-
-// volatile can_msg_t canMsgID;
 
 int period = 1000;
 int8_t ipCnt = 0;
@@ -91,11 +87,6 @@ unsigned long ota_progress_millis = 0;
 
 static volatile bool wifi_connected = false;
 static volatile uint8_t myNodeID[] = {0, 0, 0, 0}; // node ID
-
-void IRAM_ATTR Timer0_ISR()
-{
-  isrFlag = true;
-}
 
 void readMacAddress(){
   uint8_t baseMac[6];
@@ -345,10 +336,10 @@ static void sendIntroduction() {
   dataBytes[1] = myNodeID[1]; // set node ID
   dataBytes[2] = myNodeID[2]; // set node ID
   dataBytes[3] = myNodeID[3]; // set node ID
-  dataBytes[4] = nodeFeatureMask[0]; // set feature mask
-  dataBytes[5] = nodeFeatureMask[1]; // set feature mask
+  dataBytes[4] = myNodeFeatureMask[0]; // set feature mask
+  dataBytes[5] = myNodeFeatureMask[1]; // set feature mask
 
-  send_message(CAN_MY_IFACE_TYPE, dataBytes, sizeof(dataBytes));
+  send_message(CAN_MY_TYPE, dataBytes, sizeof(dataBytes));
 
 }
 
@@ -401,12 +392,12 @@ static void handle_rx_message(twai_message_t &message) {
   switch (message.identifier) {
     case SW_SET_OFF:            // set output switch off
       setSwitchState(message.data, 0);
-      txSwitchState((uint8_t *)myNodeID, 320, 2); 
+      txSwitchState((uint8_t *)myNodeID, 7, 2); 
 
       break;
     case SW_SET_ON:             // set output switch on
       setSwitchState(message.data, 1);
-      txSwitchState((uint8_t *)myNodeID, 320, 0); 
+      txSwitchState((uint8_t *)myNodeID, 7, 0); 
 
       break;
     case SW_MOM_PRESS:          // set output momentary
@@ -451,7 +442,7 @@ static void handle_rx_message(twai_message_t &message) {
     case ACK_INTRODUCTION:
       Serial.println("Received introduction acknowledgement, clearing flag");    
       FLAG_SEND_INTRODUCTION = false; // stop sending introduction messages
-      txSwitchState((uint8_t *)myNodeID, 320, 1); 
+      txSwitchState((uint8_t *)myNodeID, 7, 1); 
       break;
     
     default:
