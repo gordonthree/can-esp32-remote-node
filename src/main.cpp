@@ -1,10 +1,3 @@
-// #ifdef CORE_DEBUG_LEVEL
-// #undef CORE_DEBUG_LEVEL
-// #endif
-
-// #define CORE_DEBUG_LEVEL 3
-// #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
-
 #include <Arduino.h>
 #include <stdio.h>
 
@@ -20,8 +13,6 @@
 
 static AsyncWebServer server(80);
 
-// #include <ESPAsync_WiFiManager.h>               //https://github.com/khoih-prog/ESPAsync_WiFiManager
-
 // Load FastLED
 #include <FastLED.h>
 
@@ -30,10 +21,8 @@ static AsyncWebServer server(80);
 #include <LittleFS.h>
 #include <ArduinoJson.h> // https://github.com/bblanchon/ArduinoJson?utm_source=platformio&utm_medium=piohome
 
-
 // my wifi secrets
 #include "secrets.h"
-
 
 // esp32 native TWAI / CAN library
 #include "driver/twai.h"
@@ -42,13 +31,14 @@ static AsyncWebServer server(80);
 // my canbus stuff
 #include "canbus_msg.h"
 #include "canbus_flags.h"
+const uint8_t nodeFeatureMask[2] = {(const uint8_t)NODE_MASK_1, (const uint8_t)NODE_MASK_2}; // node feature mask
 
-#define CAN_MY_IFACE_TYPE IFACE_TOUCHSCREEN_TYPE_A
+#define CAN_MY_IFACE_TYPE SWITCH_BOX_6GANG_LOW // 6 gang switch box, 2 high, 4 low DLC 6
 #define CAN_SELF_MSG 1
 
 // Pins used to connect to CAN bus transceiver:
-#define RX_PIN 39
-#define TX_PIN 38
+// #define RX_PIN 39
+// #define TX_PIN 38
 
 // Intervall:
 #define TRANSMIT_RATE_MS 1000
@@ -224,22 +214,20 @@ static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 }
 
 static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
-  // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
-  static uint16_t rxdisplayID = (data[4] << 8) | data[5]; // switch ID
-  static uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
+  static uint8_t rxdisplayID = data[4]; // display id
   
   switch (displayMode) {
     case 0: // display off
-      Serial.printf("Unit %d Display %d OFF\n", rxunitID, rxdisplayID);
+      Serial.printf("Display: %d Mode: OFF\n", rxdisplayID);
       break;
     case 1: // display on
-      Serial.printf("Unit %d Display %d ON\n", rxunitID, rxdisplayID);
+      Serial.printf("Display: %d Mode: ON\n", rxdisplayID);
       break;
     case 2: // clear display
-      Serial.printf("Unit %d Display %d CLEAR\n", rxunitID, rxdisplayID);
+      Serial.printf("Display: %d Mode: CLEAR\n", rxdisplayID);
       break;
     case 3: // flash display
-      Serial.printf("Unit %d Display %d FLASH\n", rxunitID, rxdisplayID);
+      Serial.printf("Display: %d Mode: FLASH\n", rxdisplayID);
       break;
     default:
       Serial.println("Invalid display mode");
@@ -248,51 +236,50 @@ static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
 }
 
 static void setSwMomDur(uint8_t *data) {
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  static uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  static uint16_t swDuration = (data[6] << 8) | data[7]; // duration in msD 
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint16_t swDuration = (data[5] << 8) | data[6]; // duration in ms
 }
 
-
 static void setSwBlinkDelay(uint8_t *data) {
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  static uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  static uint16_t swBlinkDelay = (data[6] << 8) | data[7]; // delay in ms 
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint16_t swBlinkDelay = (data[5] << 8) | data[6]; // delay in ms 
 }
 
 static void setSwStrobePat(uint8_t *data) {
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  static uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  static uint8_t swStrobePat = data[6]; // strobe pattern
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint8_t swStrobePat = data[5]; // strobe pattern
 }
 
-
 static void setPWMDuty(uint8_t *data) {
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  static uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  static uint16_t PWMDuty = (data[6] << 8) | data[7]; // switch ID 
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint16_t PWMDuty = (data[5] << 8) | data[6]; // pwm duty cycle
 }
 
 static void setPWMFreq(uint8_t *data) {
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  static uint32_t unitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  static uint16_t PWMFreq = (data[6] << 8) | data[7]; // switch ID 
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint16_t PWMFreq = (data[5] << 8) | data[6]; // pwm frequency 
 }
+
 static void setSwitchMode(uint8_t *data) {
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  static uint32_t unitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  static uint8_t switchMode = data[6]; // switch mode
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint8_t switchMode = data[5]; // switch mode
 
   switch (switchMode) {
     case 0: // solid state (on/off)
-      break;
+      Serial.printf("Switch: %d Mode: Solid State\n", switchID);
+      break;  
+    break;
     case 1: // one-shot momentary
+      Serial.printf("Switch: %d Mode: One Shot\n", switchID);
       break;
     case 2: // blinking
+      Serial.printf("Switch: %d Mode: Blinking\n", switchID);
       break;
     case 3: // strobing
+      Serial.printf("Switch: %d Mode: Strobe\n", switchID);
       break;
     case 4: // pwm
+      Serial.printf("Switch: %d Mode: PWM\n", switchID);
       break;
     default:
       Serial.println("Invalid switch mode");
@@ -301,18 +288,10 @@ static void setSwitchMode(uint8_t *data) {
 
 }
 
-static void txSwitchState(uint8_t *txUnitID, uint16_t txSwitchID, uint8_t swState) {
-  static uint8_t dataBytes[8];
-  static uint8_t txDLC = 6;
+static void txSwitchState(uint8_t *data, uint8_t txSwitchID, uint8_t swState) {
+  static uint8_t txDLC = 5;
+  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID}; // set node id switch ID
   
-  dataBytes[0] = txUnitID[0]; // set unit ID
-  dataBytes[1] = txUnitID[1]; // set unit ID
-  dataBytes[2] = txUnitID[2]; // set unit ID
-  dataBytes[3] = txUnitID[3]; // set unit ID
-  dataBytes[4] = (txSwitchID >> 8) & 0xFF; // set switch ID
-  dataBytes[5] = txSwitchID & 0xFF; // set switch ID
-  
-
   switch (swState) {
 
   case 0: // switch off
@@ -330,10 +309,17 @@ static void txSwitchState(uint8_t *txUnitID, uint16_t txSwitchID, uint8_t swStat
   }
 }
 
+static void txSwitchMode(uint8_t *data, uint8_t txSwitchID, uint8_t swMode) {
+  static uint8_t txDLC = 6;
+  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID, swMode}; // set node id switch ID
+
+  send_message(SW_SET_MODE, dataBytes, txDLC);
+
+}
+
 
 static void setSwitchState(uint8_t *data, uint8_t swState) {
-  // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
-  static uint16_t switchID = (data[4] << 8) | data[5]; // switch ID
+  static uint8_t switchID = data[4]; // switch ID 
   static uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
   
   switch (swState) {
@@ -352,22 +338,23 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
   }
 }
 
-
-
 static void sendIntroduction() {
-  uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
+  // send 32-bit node id and 16-bit feature mask
+  static uint8_t dataBytes[6];
   dataBytes[0] = myNodeID[0]; // set node ID
   dataBytes[1] = myNodeID[1]; // set node ID
   dataBytes[2] = myNodeID[2]; // set node ID
   dataBytes[3] = myNodeID[3]; // set node ID
+  dataBytes[4] = nodeFeatureMask[0]; // set feature mask
+  dataBytes[5] = nodeFeatureMask[1]; // set feature mask
 
   send_message(CAN_MY_IFACE_TYPE, dataBytes, sizeof(dataBytes));
 
 }
 
-static void sendIntroack() {
+static void sendIntroack(uint8_t* txNodeID) {
   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55}; // data bytes
-  send_message(ACK_INTRODUCTION, (uint8_t *)myNodeID, 4);
+  send_message(ACK_INTRODUCTION, txNodeID, 4);
 }
 
 
@@ -470,7 +457,7 @@ static void handle_rx_message(twai_message_t &message) {
     default:
       if ((message.identifier & MASK_INTERFACE) == INTRO_INTERFACE) { // received an interface introduction
         Serial.printf("Received introduction 0x%x\n", message.identifier);
-        sendIntroack();
+        sendIntroack((uint8_t*) myNodeID);
       }
   
       break;
@@ -486,7 +473,7 @@ void TaskTWAI(void *pvParameters) {
   vTaskDelay(1000 / portTICK_PERIOD_MS);
 
   // Initialize configuration structures using macro initializers
-  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NO_ACK);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
+  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NO_ACK);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();  //Look in the api-reference for other speed sets.
   twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
