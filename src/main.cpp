@@ -46,8 +46,11 @@ unsigned long previousMillis = 0;  // will store last time a message was send
 
 static const char *TAG = "can_control";
 
-volatile uint8_t nodeSwitchState[8];
-volatile uint8_t nodeSwitchMode[8];
+volatile uint8_t nodeSwitchState[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // switch state
+volatile uint8_t nodeSwitchMode[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // switch mode
+
+volatile uint8_t testState[3] = {1, 0, 2}; // test state
+volatile uint8_t testPtr = 0; // test pointer
 
 
 #ifdef M5PICO
@@ -62,6 +65,7 @@ const char* AP_SSID  = "m5stack-atom";
 const char* hostname = "m5stack-atom";
 #define CAN_MY_TYPE BOX_SW_4RELAY // 4 relay switch box
 const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
+const uint8_t mySwitchCount = 4;
 const uint16_t myNodeIntro = REQ_BOXES; // intro request for my node type
 const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
 #else
@@ -296,14 +300,15 @@ static void rxSwitchState(uint8_t *data, uint8_t swState) {
 
   switch (swState) {
     case 0: // switch off
-      send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
+      // send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
       break;
     case 1: // switch on
-      send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
+      // send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
       break;
     case 2: // momentary press
-      send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
-      send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
+      send_message(DATA_OUTPUT_SWITCH_MOM_PUSH , dataBytes, sizeof(dataBytes));
+      // send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
+      // send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
       break;
     default:
       WebSerial.println("Invalid switch state");
@@ -311,11 +316,11 @@ static void rxSwitchState(uint8_t *data, uint8_t swState) {
   }
 }
 
-static void txSwitchMode(uint8_t *data, uint8_t txSwitchID, uint8_t swMode) {
+static void txSwitchMode(uint8_t *data, uint8_t switchID, uint8_t switchMode) {
   static uint8_t txDLC = 6;
-  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID, swMode}; // set node id switch ID
-  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d Mode %d\n",data[0], data[1], data[2], data[3], txSwitchID, swMode);
-  send_message(SW_SET_MODE, dataBytes, txDLC);
+  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], switchID, switchMode}; // set node id switch ID
+  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d Mode %d\n",data[0], data[1], data[2], data[3], switchID, switchMode);
+  send_message(SW_SET_MODE, dataBytes, sizeof(dataBytes)); // send message to set switch mode
 }
 
 static void rxSwitchMode(uint8_t *data) {
@@ -325,7 +330,7 @@ static void rxSwitchMode(uint8_t *data) {
   static uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, switchMode}; // send my own node ID, along with the switch number
 
   WebSerial.printf("RX: Set Switch %d State %d\n", switchID, switchMode);
-  send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
+  // send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
   nodeSwitchMode[switchID] = switchMode; // update switch mode
 
 
@@ -361,7 +366,45 @@ static void txIntroack(uint8_t* txNodeID) {
 }
 
 static void nodeCheckStatus() {
+  if (FLAG_SEND_INTRODUCTION) {
+    // send introduction message to all nodes
+    txIntroduction();
+    WebSerial.printf("TX: Introduction Message\n");
+  }
 
+  if (!FLAG_BEGIN_NORMAL_OPER || FLAG_HALT_NORMAL_OPER) {
+    return; // normal operation not started, exit function
+  }
+
+  #ifdef NODE_BOX_SWITCH
+  for (uint8_t switchID = 0; switchID < mySwitchCount; switchID++) {
+    static uint8_t swState = nodeSwitchState[switchID]; // get switch state
+    static uint8_t swMode = nodeSwitchMode[switchID]; // get switch mode
+    static uint8_t stateData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
+    static uint8_t modeData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, swMode}; // send my own node ID, along with the switch number
+      
+    send_message(DATA_OUTPUT_SWITCH_MODE, modeData, sizeof(modeData));  
+    WebSerial.printf("TX: DATA: Switch %d State %d Mode %d\n", switchID, swState, swMode);
+
+    switch (swState) {
+      case 0: // switch off
+        send_message(DATA_OUTPUT_SWITCH_OFF, stateData, sizeof(stateData));
+        break;
+      case 1: // switch on
+        send_message(DATA_OUTPUT_SWITCH_ON, stateData, sizeof(stateData));
+        break;
+      case 2: // momentary press
+        // send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
+        // send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
+        break;
+      default:
+        break;
+    }
+    for (int cntr = 0; cntr < 10; cntr++) {
+      __asm__("nop\n\t");
+    }
+  }
+  #endif
 }
 
 static void handle_rx_message(twai_message_t &message) {
@@ -445,6 +488,15 @@ static void handle_rx_message(twai_message_t &message) {
     case SET_DISPLAY_FLASH:          // flash display
       rxDisplayMode(message.data, 3); 
       break;
+    case DATA_OUTPUT_SWITCH_OFF:          
+      txSwitchState((uint8_t *)otherNodeID, 2, 1);
+      break;
+    case DATA_OUTPUT_SWITCH_ON:
+      txSwitchState((uint8_t *)otherNodeID, 2, 2);
+      break;      
+    case DATA_OUTPUT_SWITCH_MOM_PUSH:
+      txSwitchState((uint8_t *)otherNodeID, 2, 0);
+      break;
     case REQ_INTERFACES: // request for interface introduction     
       WebSerial.println("RX: IFACE intro req, responding");
       FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
@@ -453,11 +505,13 @@ static void handle_rx_message(twai_message_t &message) {
     case REQ_BOXES: // request for box introduction
       WebSerial.println("RX: BOX intro req, responding");
       FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
+      FLAG_BEGIN_NORMAL_OPER = false; // set flag to begin normal operation
       txIntroduction(); // send our introduction message
       break;
     case ACK_INTRODUCTION:
       WebSerial.println("RX: Intro ACK, clearing flag");    
       FLAG_SEND_INTRODUCTION = false; // stop sending introduction messages
+      FLAG_BEGIN_NORMAL_OPER = true; // set flag to begin normal operation
       break;
     
     default:
@@ -468,9 +522,9 @@ static void handle_rx_message(twai_message_t &message) {
       if ((message.identifier & MASK_24BIT) == (INTRO_BOX)) { // received an interface introduction
         WebSerial.printf("RX: BOX intro from %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
         txIntroack((uint8_t*) otherNodeID);
-        txSwitchState((uint8_t *)otherNodeID, 7, 1); 
-        txSwitchState((uint8_t *)otherNodeID, 7, 0); 
-        txSwitchState((uint8_t *)otherNodeID, 7, 2);   
+        txSwitchState((uint8_t *)otherNodeID, 2, 1); 
+        txSwitchState((uint8_t *)otherNodeID, 2, 0); 
+           
       }
       break;
   }
@@ -591,10 +645,10 @@ void TaskTWAI(void *pvParameters) {
       #elif M5STACK
       // send_message(REQ_INTERFACES, NULL, 0); // send interface introduction request
       #endif
+      nodeCheckStatus();
     }
     vTaskDelay(10);
 
-    nodeCheckStatus();
   }
 }
 
