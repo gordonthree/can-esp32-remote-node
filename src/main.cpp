@@ -37,51 +37,29 @@ const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
 #define CAN_MY_TYPE BOX_SW_4RELAY // 4 relay switch box
 #define CAN_SELF_MSG 1
 
-// Pins used to connect to CAN bus transceiver:
-// #define RX_PIN 39
-// #define TX_PIN 38
-
-// Intervall:
+// Interval:
 #define TRANSMIT_RATE_MS 1000
 #define POLLING_RATE_MS 1000
 
 static bool driver_installed = false;
 
 unsigned long previousMillis = 0;  // will store last time a message was send
-String texto;
 
 static const char *TAG = "can_control";
 
 volatile uint8_t switchStatus[16];
 
-// Calls = 0;
-
-// no-op routine
-#define NOP __asm__("nop");
-
-
-// setup the ARGB led
-#define NUM_LEDS 1
-#define DATA_PIN 35
-
-#define AP_SSID  "cancontrol"
-
+const char* AP_SSID  = "cannode";
 const char* ssid     = SECRET_SSID;
 const char* password = SECRET_PSK;
-const char* hostname = AP_SSID;
-
-// CanFrame rxFrame;
-
-volatile int i=4;
-volatile bool isrFlag=false;
-volatile bool ipaddFlag=true;
+const char* hostname = "canespnode";
 
 int period = 1000;
 int8_t ipCnt = 0;
 
 unsigned long time_now = 0;
 
-CRGB leds[NUM_LEDS];
+CRGB leds[ARGB_LEDS];
 
 unsigned long ota_progress_millis = 0;
 
@@ -599,7 +577,7 @@ void setup() {
   // );              // pin task to core 0
   //tskNO_AFFINITY); // pin task to core is automatic depends the load of each core
 
-  FastLED.addLeds<SK6812, DATA_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.addLeds<SK6812, ARGB_PIN, GRB>(leds, ARGB_LEDS);
   leds[0] = CRGB::Black;
   FastLED.show();
 
