@@ -10,6 +10,8 @@
 #include <AsyncTCP.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoOTA.h>
+#include <WebSerial.h>
 
 static AsyncWebServer server(80);
 
@@ -65,6 +67,21 @@ unsigned long ota_progress_millis = 0;
 
 static volatile bool wifi_connected = false;
 static volatile uint8_t myNodeID[] = {0, 0, 0, 0}; // node ID
+
+void recvMsg(uint8_t *data, size_t len){
+  WebSerial.println("Received Data...");
+  String d = "";
+  for(int i=0; i < len; i++){
+    d += char(data[i]);
+  }
+  WebSerial.println(d);
+  if (d == "ON"){
+    // digitalWrite(LED, HIGH);
+  }
+  if (d=="OFF"){
+    // digitalWrite(LED, LOW);
+  }
+}
 
 void readMacAddress(){
   uint8_t baseMac[6];
@@ -187,19 +204,19 @@ static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
   
   switch (displayMode) {
     case 0: // display off
-      Serial.printf("Display: %d Mode: OFF\n", rxdisplayID);
+      WebSerial.printf("Display: %d Mode: OFF\n", rxdisplayID);
       break;
     case 1: // display on
-      Serial.printf("Display: %d Mode: ON\n", rxdisplayID);
+      WebSerial.printf("Display: %d Mode: ON\n", rxdisplayID);
       break;
     case 2: // clear display
-      Serial.printf("Display: %d Mode: CLEAR\n", rxdisplayID);
+      WebSerial.printf("Display: %d Mode: CLEAR\n", rxdisplayID);
       break;
     case 3: // flash display
-      Serial.printf("Display: %d Mode: FLASH\n", rxdisplayID);
+      WebSerial.printf("Display: %d Mode: FLASH\n", rxdisplayID);
       break;
     default:
-      Serial.println("Invalid display mode");
+      WebSerial.println("Invalid display mode");
       break;
   }
 }
@@ -235,23 +252,23 @@ static void setSwitchMode(uint8_t *data) {
 
   switch (switchMode) {
     case 0: // solid state (on/off)
-      Serial.printf("Switch: %d Mode: Solid State\n", switchID);
+      WebSerial.printf("Switch: %d Mode: Solid State\n", switchID);
       break;  
     break;
     case 1: // one-shot momentary
-      Serial.printf("Switch: %d Mode: One Shot\n", switchID);
+      WebSerial.printf("Switch: %d Mode: One Shot\n", switchID);
       break;
     case 2: // blinking
-      Serial.printf("Switch: %d Mode: Blinking\n", switchID);
+      WebSerial.printf("Switch: %d Mode: Blinking\n", switchID);
       break;
     case 3: // strobing
-      Serial.printf("Switch: %d Mode: Strobe\n", switchID);
+      WebSerial.printf("Switch: %d Mode: Strobe\n", switchID);
       break;
     case 4: // pwm
-      Serial.printf("Switch: %d Mode: PWM\n", switchID);
+      WebSerial.printf("Switch: %d Mode: PWM\n", switchID);
       break;
     default:
-      Serial.println("Invalid switch mode");
+      WebSerial.println("Invalid switch mode");
       break;
   }
 
@@ -273,7 +290,7 @@ static void txSwitchState(uint8_t *data, uint8_t txSwitchID, uint8_t swState) {
     send_message(SW_MOM_PRESS, dataBytes, txDLC);
     break;
   default: // unsupported state
-    Serial.println("Invalid switch state for transmission");
+    WebSerial.println("Invalid switch state for transmission");
     break;
   }
 }
@@ -293,29 +310,30 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
   
   switch (swState) {
     case 0: // switch off
-      Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d OFF\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      WebSerial.printf("Unit %02x:%02x:%02x:%02x Switch %d OFF\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
       break;
     case 1: // switch on
-      Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d ON\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      WebSerial.printf("Unit %02x:%02x:%02x:%02x Switch %d ON\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
       break;
     case 2: // momentary press
-      Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d MOMENTARY PRESS\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      WebSerial.printf("Unit %02x:%02x:%02x:%02x Switch %d MOMENTARY PRESS\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
       break;
     default:
-      Serial.println("Invalid switch state");
+      WebSerial.println("Invalid switch state");
       break;
   }
 }
 
 static void sendIntroduction() {
   // send 32-bit node id and 16-bit feature mask
-  static uint8_t dataBytes[6];
-  dataBytes[0] = myNodeID[0]; // set node ID
-  dataBytes[1] = myNodeID[1]; // set node ID
-  dataBytes[2] = myNodeID[2]; // set node ID
-  dataBytes[3] = myNodeID[3]; // set node ID
-  dataBytes[4] = myNodeFeatureMask[0]; // set feature mask
-  dataBytes[5] = myNodeFeatureMask[1]; // set feature mask
+  static uint8_t dataBytes[6] = { myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], 
+                                  FEATURE_BOX_SW_4RELAY[0], FEATURE_BOX_SW_4RELAY[1] }; 
+  // dataBytes[0] = myNodeID[0]; // set node ID
+  // dataBytes[1] = myNodeID[1]; // set node ID
+  // dataBytes[2] = myNodeID[2]; // set node ID
+  // dataBytes[3] = myNodeID[3]; // set node ID
+  // dataBytes[4] = myNodeFeatureMask[0]; // set feature mask
+  // dataBytes[5] = myNodeFeatureMask[1]; // set feature mask
 
   send_message(CAN_MY_TYPE, dataBytes, sizeof(dataBytes));
 
@@ -342,20 +360,20 @@ static void handle_rx_message(twai_message_t &message) {
       msgFlag = true; // message is for us
       leds[0] = CRGB::Green;
       FastLED.show();
-      Serial.printf("Node Match MSG ID: 0x%x Data:", message.identifier);
+      WebSerial.printf("Node Match MSG ID: 0x%x Data:", message.identifier);
     } else {
       msgFlag = false; // message is not for us
     
-      Serial.printf("No Match MSG ID: 0x%x Data:", message.identifier);
+      WebSerial.printf("No Match MSG ID: 0x%x Data:", message.identifier);
     }
 
     for (int i = 0; i < message.data_length_code; i++) {
-      Serial.printf(" %d = %02x", i, message.data[i]);
+      WebSerial.printf(" %d = %02x", i, message.data[i]);
     }
-    Serial.println("");
+    WebSerial.println("");
   } else {
     msgFlag = true; // general broadcast message is valid
-    Serial.printf("RX MSG: 0x%x NO DATA\n", message.identifier);
+    WebSerial.printf("RX MSG: 0x%x NO DATA\n", message.identifier);
   }
 
   /*   
@@ -364,7 +382,7 @@ static void handle_rx_message(twai_message_t &message) {
   }
  */
   if (!msgFlag) {
-    Serial.println("Message does not match our ID.");
+    WebSerial.println("Message does not match our ID.");
   }
 
   switch (message.identifier) {
@@ -376,7 +394,6 @@ static void handle_rx_message(twai_message_t &message) {
     case SW_SET_ON:             // set output switch on
       setSwitchState(message.data, 1);
       txSwitchState((uint8_t *)myNodeID, 7, 0); 
-
       break;
     case SW_MOM_PRESS:          // set output momentary
       setSwitchState(message.data, 2);
@@ -412,23 +429,25 @@ static void handle_rx_message(twai_message_t &message) {
       setDisplayMode(message.data, 3); 
       break;
     case REQ_INTERFACES:
-      Serial.println("Interface intro request, responding with 0x702");
+      WebSerial.println("Interface intro request, responding with my node id");
       FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
       sendIntroduction(); // send our introduction message
       break;
 
     case ACK_INTRODUCTION:
-      Serial.println("Received introduction acknowledgement, clearing flag");    
+      WebSerial.println("Received introduction acknowledgement, clearing flag");    
       FLAG_SEND_INTRODUCTION = false; // stop sending introduction messages
       txSwitchState((uint8_t *)myNodeID, 7, 1); 
       break;
     
     default:
-      if ((message.identifier & MASK_INTERFACE) == INTRO_INTERFACE) { // received an interface introduction
-        Serial.printf("Received introduction 0x%x\n", message.identifier);
+      if ((message.identifier & MASK_24BIT) == INTRO_INTERFACE) { // received an interface introduction
+        WebSerial.printf("Received introduction 0x%x\n", message.identifier);
+        sendIntroack((uint8_t*) myNodeID);
+      } else if ((message.identifier & MASK_24BIT) == INTRO_BOX) { // received a box introduction
+        WebSerial.printf("Received introduction 0x%x\n", message.identifier);
         sendIntroack((uint8_t*) myNodeID);
       }
-  
       break;
   }
 
@@ -448,26 +467,26 @@ void TaskTWAI(void *pvParameters) {
 
   // Install TWAI driver
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
-    Serial.println("Driver installed");
+    WebSerial.println("Driver installed");
   } else {
-    Serial.println("Failed to install driver");
+    WebSerial.println("Failed to install driver");
     return;
   }
 
   // Start TWAI driver
   if (twai_start() == ESP_OK) {
-    Serial.println("Driver started");
+    WebSerial.println("Driver started");
   } else {
-    Serial.println("Failed to start driver");
+    WebSerial.println("Failed to start driver");
     return;
   }
 
   // Reconfigure alerts to detect frame receive, Bus-Off error and RX queue full states
   uint32_t alerts_to_enable = TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_BUS_ERROR;
   if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK) {
-    Serial.println("CAN Alerts reconfigured");
+    WebSerial.println("CAN Alerts reconfigured");
   } else {
-    Serial.println("Failed to reconfigure alerts");
+    WebSerial.println("Failed to reconfigure alerts");
     return;
   }
 
@@ -489,23 +508,23 @@ void TaskTWAI(void *pvParameters) {
 
     // Handle alerts
     if (alerts_triggered & TWAI_ALERT_ERR_PASS) {
-      Serial.println("Alert: TWAI controller has become error passive.");
+      WebSerial.println("Alert: TWAI controller has become error passive.");
       leds[0] = CRGB::Red;
       FastLED.show();
     }
 
     if (alerts_triggered & TWAI_ALERT_BUS_ERROR) {
-      Serial.println("Alert: A (Bit, Stuff, CRC, Form, ACK) error has occurred on the bus.");
-      Serial.printf("Bus error count: %d\n", twaistatus.bus_error_count);
+      WebSerial.println("Alert: A (Bit, Stuff, CRC, Form, ACK) error has occurred on the bus.");
+      WebSerial.printf("Bus error count: %d\n", twaistatus.bus_error_count);
       leds[0] = CRGB::Red;
       FastLED.show();
     }
 
     if (alerts_triggered & TWAI_ALERT_TX_FAILED) {
-      Serial.println("Alert: The Transmission failed.");
-      Serial.printf("TX buffered: %d\t", twaistatus.msgs_to_tx);
-      Serial.printf("TX error: %d\t", twaistatus.tx_error_counter);
-      Serial.printf("TX failed: %d\n", twaistatus.tx_failed_count);
+      WebSerial.println("Alert: The Transmission failed.");
+      WebSerial.printf("TX buffered: %d\t", twaistatus.msgs_to_tx);
+      WebSerial.printf("TX error: %d\t", twaistatus.tx_error_counter);
+      WebSerial.printf("TX failed: %d\n", twaistatus.tx_failed_count);
       leds[0] = CRGB::Red;
       FastLED.show();
     }
@@ -520,10 +539,10 @@ void TaskTWAI(void *pvParameters) {
     if (alerts_triggered & TWAI_ALERT_RX_QUEUE_FULL) {
       leds[0] = CRGB::Red;
       FastLED.show();
-      Serial.println("Alert: The RX queue is full causing a received frame to be lost.");
-      Serial.printf("RX buffered: %d\t", twaistatus.msgs_to_rx);
-      Serial.printf("RX missed: %d\t", twaistatus.rx_missed_count);
-      Serial.printf("RX overrun %d\n", twaistatus.rx_overrun_count);
+      WebSerial.println("Alert: The RX queue is full causing a received frame to be lost.");
+      WebSerial.printf("RX buffered: %d\t", twaistatus.msgs_to_rx);
+      WebSerial.printf("RX missed: %d\t", twaistatus.rx_missed_count);
+      WebSerial.printf("RX overrun %d\n", twaistatus.rx_overrun_count);
     }
 
     // Check if message is received
@@ -589,6 +608,41 @@ void setup() {
   WiFi.softAP(AP_SSID);
   WiFi.begin(ssid, password);
 
+  ArduinoOTA
+  .onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_SPIFFS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+    Serial.println("Start updating " + type);
+  })
+  .onEnd([]() {
+    Serial.println("\nEnd");
+  })
+  .onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  })
+  .onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+
+  ArduinoOTA.begin();
+
   Serial.println("AP Started");
   Serial.print("AP SSID: ");
   Serial.println(AP_SSID);
@@ -606,9 +660,12 @@ void setup() {
     request->send(200, "text/plain", "Hi! This is AsyncWebServer.");
   });
 
-
   server.begin();
   Serial.println("HTTP server started");
+
+  // WebSerial is accessible at "<IP Address>/webserial" in browser
+  WebSerial.begin(&server);
+  WebSerial.onMessage(recvMsg);
 
   Serial.print("[DEFAULT] ESP32 Board MAC Address: ");
   readMacAddress();
@@ -625,6 +682,6 @@ void printWifi() {
 
 
 void loop() {
-
+  ArduinoOTA.handle();
   // NOP;
 }
