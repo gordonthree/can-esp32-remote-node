@@ -6,7 +6,7 @@
 
 // Load Wi-Fi networking
 #include <WiFi.h>
-#include "esp_wifi.h"
+#include <esp_wifi.h>
 #include <AsyncTCP.h>
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
@@ -99,7 +99,7 @@ void wifiOnDisconnect(){
 }
 
 void WiFiEvent(WiFiEvent_t event){
-    switch(event) {
+   /*  switch(event) {
 
         case SYSTEM_EVENT_AP_START:
             //can set ap hostname here
@@ -138,7 +138,7 @@ void WiFiEvent(WiFiEvent_t event){
 
         default:
             break;
-    }
+    } */
 }
 
 static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
