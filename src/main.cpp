@@ -46,7 +46,9 @@ unsigned long previousMillis = 0;  // will store last time a message was send
 
 static const char *TAG = "can_control";
 
-volatile uint8_t switchStatus[16];
+volatile uint8_t nodeSwitchState[8];
+volatile uint8_t nodeSwitchMode[8];
+
 
 #ifdef M5PICO
 const char* AP_SSID  = "m5stamp-pico";
@@ -63,8 +65,12 @@ const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
 const uint16_t myNodeIntro = REQ_BOXES; // intro request for my node type
 const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
 #else
-const char* AP_SSID  = "cannode";
-const char* hostname = "cannode";
+const char* AP_SSID  = "candisplay";
+const char* hostname = "candisplay";
+#define CAN_MY_TYPE DISP_LCD // LCD display
+const uint8_t* myNodeFeatureMask = FEATURE_DISP_LCD; // node feature mask
+const uint16_t myNodeIntro = REQ_DISPLAYS; // intro request for my node type
+const uint8_t otherNodeID[] = {0xFA, 0x61, 0x5D, 0xDC}; // M5STACK node id
 #endif
 const char* ssid     = SECRET_SSID;
 const char* password = SECRET_PSK;
@@ -256,15 +262,16 @@ static void rxPWMFreq(uint8_t *data) {
   static uint16_t PWMFreq = (data[5] << 8) | data[6]; // pwm frequency 
 }
 
-static void txSwitchState(uint8_t *data, uint8_t txSwitchID, uint8_t swState) {
+static void txSwitchState(uint8_t *data, uint8_t switchID, uint8_t swState) {
   static uint8_t txDLC = 5;
-  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID}; // set node id and switch ID
+  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], switchID}; // set node id and switch ID
   
-  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d State %d\n", data[0],data[1],data[2],data[3], txSwitchID, swState);
-  
+  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d State %d\n", data[0],data[1],data[2],data[3], switchID, swState);
+
   switch (swState) {
     case 0: // switch off
       send_message(SW_SET_OFF, dataBytes, txDLC);
+
       break;
     case 1: // switch on
       send_message(SW_SET_ON, dataBytes, txDLC);
@@ -284,6 +291,8 @@ static void rxSwitchState(uint8_t *data, uint8_t swState) {
   static uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
 
   WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
+  nodeSwitchState[switchID] = swState; // update switch state
+  
 
   switch (swState) {
     case 0: // switch off
@@ -317,6 +326,8 @@ static void rxSwitchMode(uint8_t *data) {
 
   WebSerial.printf("RX: Set Switch %d State %d\n", switchID, switchMode);
   send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
+  nodeSwitchMode[switchID] = switchMode; // update switch mode
+
 
   switch (switchMode) {
     case 0: // solid state (on/off)
@@ -349,6 +360,9 @@ static void txIntroack(uint8_t* txNodeID) {
   send_message(ACK_INTRODUCTION, txNodeID, 4);
 }
 
+static void nodeCheckStatus() {
+
+}
 
 static void handle_rx_message(twai_message_t &message) {
   // static twai_message_t altmessage;
@@ -579,6 +593,8 @@ void TaskTWAI(void *pvParameters) {
       #endif
     }
     vTaskDelay(10);
+
+    nodeCheckStatus();
   }
 }
 
