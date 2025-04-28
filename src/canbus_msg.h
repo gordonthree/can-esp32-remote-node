@@ -116,6 +116,7 @@ const uint8_t FEATURE_DISP_LCD[] = {0x80,0x48};     // feature mask for non-touc
 #define DATA_IMU_X_GYRO 0x514 // IMU X Gyro DLC 7
 #define DATA_IMU_Y_GYRO 0x515 // IMU Y Gyro DLC 7
 #define DATA_IMU_Z_GYRO 0x516 // IMU Z Gyro DLC 7
+#define DATA_OUTPUT_SWITCH_MOM_PUSH 0x519 // output switch mom push DLC 7
 #define DATA_NODE_CPU_TEMP 0x51A // node cpu temp DLC 6
 #define DATA_NODE_LAST_BOOT_TIMESTAMP 0x51B // node last boot timestamp DLC 8
 #define DATA_NODE_PCB_TEMP 0x51C // node pcb temp DLC 6
