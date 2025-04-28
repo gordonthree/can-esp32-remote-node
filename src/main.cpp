@@ -34,10 +34,7 @@ static AsyncWebServer server(80);
 #include "canbus_msg.h"
 #include "canbus_flags.h"
 
-const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
-
-#define CAN_MY_TYPE BOX_SW_4RELAY // 4 relay switch box
-#define CAN_SELF_MSG 1
+#define CAN_SELF_MSG 0
 
 // Interval:
 #define TRANSMIT_RATE_MS 1000
@@ -51,10 +48,22 @@ static const char *TAG = "can_control";
 
 volatile uint8_t switchStatus[16];
 
+#ifdef M5PICO
+const char* AP_SSID  = "m5stamp-pico";
+const char* hostname = "m5stamp-pico";
+#define CAN_MY_TYPE IFACE_TOUCHSCREEN_TYPE_A
+const uint8_t* myNodeFeatureMask = FEATURE_IFACE_TOUCHSCREEN_TYPE_A; // node feature mask
+#elif M5STACK
+const char* AP_SSID  = "m5stack-atom";
+const char* hostname = "m5stack-atom";
+#define CAN_MY_TYPE BOX_SW_4RELAY // 4 relay switch box
+const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
+#else
 const char* AP_SSID  = "cannode";
+const char* hostname = "cannode";
+#endif
 const char* ssid     = SECRET_SSID;
 const char* password = SECRET_PSK;
-const char* hostname = "canespnode";
 
 int period = 1000;
 int8_t ipCnt = 0;
@@ -94,7 +103,7 @@ void readMacAddress(){
     myNodeID[1] = baseMac[3];
     myNodeID[2] = baseMac[4];
     myNodeID[3] = baseMac[5];
-    // Serial.printf("Node ID: %02x:%02x:%02x:%02x\n", myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3]);
+    Serial.printf("Node ID: %02x:%02x:%02x:%02x\n", myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3]);
   } else {
     Serial.println("Failed to set NODE ID");
   }
@@ -568,6 +577,14 @@ void TaskTWAI(void *pvParameters) {
   }
 }
 
+void printWifi() {
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
 void setup() {
   delay(5000);
 
@@ -669,17 +686,8 @@ void setup() {
 
   Serial.print("[DEFAULT] ESP32 Board MAC Address: ");
   readMacAddress();
+  printWifi();
 }
-
-void printWifi() {
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-}
-
-
 
 void loop() {
   ArduinoOTA.handle();
