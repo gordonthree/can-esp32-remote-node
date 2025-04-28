@@ -53,11 +53,15 @@ const char* AP_SSID  = "m5stamp-pico";
 const char* hostname = "m5stamp-pico";
 #define CAN_MY_TYPE IFACE_TOUCHSCREEN_TYPE_A
 const uint8_t* myNodeFeatureMask = FEATURE_IFACE_TOUCHSCREEN_TYPE_A; // node feature mask
+const uint16_t myNodeIntro = REQ_INTERFACES; // intro request for my node type
+const uint8_t otherNodeID[] = {0xFA, 0x61, 0x5D, 0xDC}; // M5STACK node id
 #elif M5STACK
 const char* AP_SSID  = "m5stack-atom";
 const char* hostname = "m5stack-atom";
 #define CAN_MY_TYPE BOX_SW_4RELAY // 4 relay switch box
 const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
+const uint16_t myNodeIntro = REQ_BOXES; // intro request for my node type
+const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
 #else
 const char* AP_SSID  = "cannode";
 const char* hostname = "cannode";
@@ -190,13 +194,13 @@ static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
     leds[0] = CRGB::Red;
     FastLED.show();
     // ESP_LOGE(TAG, "Failed to queue message for transmission, initiating recovery");
-    printf("Failed to queue message for transmission, resetting controller\n");
+    WebSerial.printf("ERR: Failed to queue message for transmission, resetting controller\n");
     twai_initiate_recovery();
     twai_stop();
-    printf("twai Stoped\n");
+    WebSerial.printf("WARN: twai Stoped\n");
     vTaskDelay(500);
     twai_start();
-    printf("twai Started\n");
+    WebSerial.printf("WARN: twai Started\n");
     // ESP_LOGI(TAG, "twai restarted\n");
     // wifiOnConnect();
     vTaskDelay(500);
@@ -208,21 +212,18 @@ static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
   // vTaskDelay(100);
 }
 
-static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
+static void rxDisplayMode(uint8_t *data, uint8_t displayMode) {
   static uint8_t rxdisplayID = data[4]; // display id
-  
+  WebSerial.printf("Display: %d Mode: %d\n", rxdisplayID, displayMode);
+
   switch (displayMode) {
     case 0: // display off
-      WebSerial.printf("Display: %d Mode: OFF\n", rxdisplayID);
       break;
     case 1: // display on
-      WebSerial.printf("Display: %d Mode: ON\n", rxdisplayID);
       break;
     case 2: // clear display
-      WebSerial.printf("Display: %d Mode: CLEAR\n", rxdisplayID);
       break;
     case 3: // flash display
-      WebSerial.printf("Display: %d Mode: FLASH\n", rxdisplayID);
       break;
     default:
       WebSerial.println("Invalid display mode");
@@ -230,102 +231,70 @@ static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
   }
 }
 
-static void setSwMomDur(uint8_t *data) {
+static void rxSwMomDur(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t swDuration = (data[5] << 8) | data[6]; // duration in ms
 }
 
-static void setSwBlinkDelay(uint8_t *data) {
+static void rxSwBlinkDelay(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t swBlinkDelay = (data[5] << 8) | data[6]; // delay in ms 
 }
 
-static void setSwStrobePat(uint8_t *data) {
+static void rxSwStrobePat(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint8_t swStrobePat = data[5]; // strobe pattern
 }
 
-static void setPWMDuty(uint8_t *data) {
+static void rxPWMDuty(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t PWMDuty = (data[5] << 8) | data[6]; // pwm duty cycle
 }
 
-static void setPWMFreq(uint8_t *data) {
+static void rxPWMFreq(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t PWMFreq = (data[5] << 8) | data[6]; // pwm frequency 
 }
 
-static void setSwitchMode(uint8_t *data) {
-  static uint8_t switchID = data[4]; // switch ID 
-  static uint8_t switchMode = data[5]; // switch mode
-
-  switch (switchMode) {
-    case 0: // solid state (on/off)
-      WebSerial.printf("Switch: %d Mode: Solid State\n", switchID);
-      break;  
-    break;
-    case 1: // one-shot momentary
-      WebSerial.printf("Switch: %d Mode: One Shot\n", switchID);
-      break;
-    case 2: // blinking
-      WebSerial.printf("Switch: %d Mode: Blinking\n", switchID);
-      break;
-    case 3: // strobing
-      WebSerial.printf("Switch: %d Mode: Strobe\n", switchID);
-      break;
-    case 4: // pwm
-      WebSerial.printf("Switch: %d Mode: PWM\n", switchID);
-      break;
-    default:
-      WebSerial.println("Invalid switch mode");
-      break;
-  }
-
-}
-
 static void txSwitchState(uint8_t *data, uint8_t txSwitchID, uint8_t swState) {
   static uint8_t txDLC = 5;
-  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID}; // set node id switch ID
+  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID}; // set node id and switch ID
   
-  switch (swState) {
-
-  case 0: // switch off
-    send_message(SW_SET_OFF, dataBytes, txDLC);
-    break;
-  case 1: // switch on
-    send_message(SW_SET_ON, dataBytes, txDLC);
-    break;
-  case 2: // momentary press
-    send_message(SW_MOM_PRESS, dataBytes, txDLC);
-    break;
-  default: // unsupported state
-    WebSerial.println("Invalid switch state for transmission");
-    break;
-  }
-}
-
-static void txSwitchMode(uint8_t *data, uint8_t txSwitchID, uint8_t swMode) {
-  static uint8_t txDLC = 6;
-  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID, swMode}; // set node id switch ID
-
-  send_message(SW_SET_MODE, dataBytes, txDLC);
-
-}
-
-
-static void setSwitchState(uint8_t *data, uint8_t swState) {
-  static uint8_t switchID = data[4]; // switch ID 
-  static uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
+  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d State %d\n", data[0],data[1],data[2],data[3], txSwitchID, swState);
   
   switch (swState) {
     case 0: // switch off
-      WebSerial.printf("Unit %02x:%02x:%02x:%02x Switch %d OFF\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      send_message(SW_SET_OFF, dataBytes, txDLC);
       break;
     case 1: // switch on
-      WebSerial.printf("Unit %02x:%02x:%02x:%02x Switch %d ON\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      send_message(SW_SET_ON, dataBytes, txDLC);
       break;
     case 2: // momentary press
-      WebSerial.printf("Unit %02x:%02x:%02x:%02x Switch %d MOMENTARY PRESS\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      send_message(SW_MOM_PRESS, dataBytes, txDLC);
+      break;
+    default: // unsupported state
+      WebSerial.println("Invalid switch state for transmission");
+      break;
+  }
+}
+
+static void rxSwitchState(uint8_t *data, uint8_t swState) {
+  static uint8_t switchID = data[4]; // switch ID 
+  // static uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
+  static uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
+
+  WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
+
+  switch (swState) {
+    case 0: // switch off
+      send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
+      break;
+    case 1: // switch on
+      send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
+      break;
+    case 2: // momentary press
+      send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
+      send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
       break;
     default:
       WebSerial.println("Invalid switch state");
@@ -333,22 +302,49 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
   }
 }
 
-static void sendIntroduction() {
-  // send 32-bit node id and 16-bit feature mask
-  static uint8_t dataBytes[6] = { myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], 
-                                  FEATURE_BOX_SW_4RELAY[0], FEATURE_BOX_SW_4RELAY[1] }; 
-  // dataBytes[0] = myNodeID[0]; // set node ID
-  // dataBytes[1] = myNodeID[1]; // set node ID
-  // dataBytes[2] = myNodeID[2]; // set node ID
-  // dataBytes[3] = myNodeID[3]; // set node ID
-  // dataBytes[4] = myNodeFeatureMask[0]; // set feature mask
-  // dataBytes[5] = myNodeFeatureMask[1]; // set feature mask
-
-  send_message(CAN_MY_TYPE, dataBytes, sizeof(dataBytes));
-
+static void txSwitchMode(uint8_t *data, uint8_t txSwitchID, uint8_t swMode) {
+  static uint8_t txDLC = 6;
+  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], txSwitchID, swMode}; // set node id switch ID
+  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d Mode %d\n",data[0], data[1], data[2], data[3], txSwitchID, swMode);
+  send_message(SW_SET_MODE, dataBytes, txDLC);
 }
 
-static void sendIntroack(uint8_t* txNodeID) {
+static void rxSwitchMode(uint8_t *data) {
+  static uint8_t switchID = data[4]; // switch ID 
+  static uint8_t switchMode = data[5]; // switch mode
+
+  static uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, switchMode}; // send my own node ID, along with the switch number
+
+  WebSerial.printf("RX: Set Switch %d State %d\n", switchID, switchMode);
+  send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
+
+  switch (switchMode) {
+    case 0: // solid state (on/off)
+      break;  
+    break;
+    case 1: // one-shot momentary
+      break;
+    case 2: // blinking
+      break;
+    case 3: // strobing
+      break;
+    case 4: // pwm
+      break;
+    default:
+      WebSerial.println("Invalid switch mode");
+      break;
+  }
+}
+
+static void txIntroduction() {
+  // send 32-bit node id and 16-bit feature mask
+  static uint8_t dataBytes[6] = { myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], 
+                                  myNodeFeatureMask[0], myNodeFeatureMask[1] }; 
+
+  send_message(CAN_MY_TYPE, dataBytes, sizeof(dataBytes));
+}
+
+static void txIntroack(uint8_t* txNodeID) {
   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55}; // data bytes
   send_message(ACK_INTRODUCTION, txNodeID, 4);
 }
@@ -365,7 +361,7 @@ static void handle_rx_message(twai_message_t &message) {
     static uint8_t rxUnitID[4] = {message.data[0], message.data[1], message.data[2], message.data[3]};
     static int comp = memcmp((const void *)rxUnitID, (const void *)myNodeID, 4);
 
-    if (comp == 0) {
+  /*   if (comp == 0) {
       msgFlag = true; // message is for us
       leds[0] = CRGB::Green;
       FastLED.show();
@@ -375,14 +371,15 @@ static void handle_rx_message(twai_message_t &message) {
     
       WebSerial.printf("No Match MSG ID: 0x%x Data:", message.identifier);
     }
-
+ */
+    WebSerial.printf("RX: MSG 0x%x Data:", message.identifier);
     for (int i = 0; i < message.data_length_code; i++) {
       WebSerial.printf(" %d = %02x", i, message.data[i]);
     }
     WebSerial.println("");
   } else {
     msgFlag = true; // general broadcast message is valid
-    WebSerial.printf("RX MSG: 0x%x NO DATA\n", message.identifier);
+    WebSerial.printf("RX: MSG 0x%x NO DATA\n", message.identifier);
   }
 
   /*   
@@ -390,72 +387,76 @@ static void handle_rx_message(twai_message_t &message) {
     return; // message is not for us, exit function
   }
  */
-  if (!msgFlag) {
-    WebSerial.println("Message does not match our ID.");
-  }
+  // if (!msgFlag) {
+  //   WebSerial.println("Message does not match our ID.");
+  // }
 
   switch (message.identifier) {
     case SW_SET_OFF:            // set output switch off
-      setSwitchState(message.data, 0);
-      txSwitchState((uint8_t *)myNodeID, 7, 2); 
-
+      rxSwitchState(message.data, 0);
       break;
     case SW_SET_ON:             // set output switch on
-      setSwitchState(message.data, 1);
-      txSwitchState((uint8_t *)myNodeID, 7, 0); 
+      rxSwitchState(message.data, 1);
       break;
     case SW_MOM_PRESS:          // set output momentary
-      setSwitchState(message.data, 2);
+      rxSwitchState(message.data, 2);
       break;
     case SW_SET_MODE:           // setup output switch modes
-      setSwitchMode(message.data);
+      rxSwitchMode(message.data);
       break;
     case SW_SET_PWM_DUTY:          // set output switch pwm duty
-      setPWMDuty(message.data);  
+      rxPWMDuty(message.data);  
       break;
     case SW_SET_PWM_FREQ:          // set output switch pwm frequency
-      setPWMFreq(message.data);
+      rxPWMFreq(message.data);
       break;
     case SW_SET_MOM_DUR:          // set output switch momentary duration
-      setSwMomDur(message.data);
+      rxSwMomDur(message.data);
       break;
     case SW_SET_BLINK_DELAY:          // set output switch blink delay
-      setSwBlinkDelay(message.data);
+      rxSwBlinkDelay(message.data);
       break;
     case SW_SET_STROBE_PAT:          // set output switch strobe pattern
-      setSwStrobePat(message.data);
+      rxSwStrobePat(message.data);
       break;
     case SET_DISPLAY_OFF:          // set display off
-      setDisplayMode(message.data, 0); 
+      rxDisplayMode(message.data, 0); 
       break;
     case SET_DISPLAY_ON:          // set display on
-      setDisplayMode(message.data, 1); 
+      rxDisplayMode(message.data, 1); 
       break;    
     case SET_DISPLAY_CLEAR:          // clear display
-      setDisplayMode(message.data, 2); 
+      rxDisplayMode(message.data, 2); 
       break;
     case SET_DISPLAY_FLASH:          // flash display
-      setDisplayMode(message.data, 3); 
+      rxDisplayMode(message.data, 3); 
       break;
-    case REQ_INTERFACES:
-      WebSerial.println("Interface intro request, responding with my node id");
+    case REQ_INTERFACES: // request for interface introduction     
+      WebSerial.println("RX: IFACE intro req, responding");
       FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
-      sendIntroduction(); // send our introduction message
+      txIntroduction(); // send our introduction message
       break;
-
+    case REQ_BOXES: // request for box introduction
+      WebSerial.println("RX: BOX intro req, responding");
+      FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
+      txIntroduction(); // send our introduction message
+      break;
     case ACK_INTRODUCTION:
-      WebSerial.println("Received introduction acknowledgement, clearing flag");    
+      WebSerial.println("RX: Intro ACK, clearing flag");    
       FLAG_SEND_INTRODUCTION = false; // stop sending introduction messages
-      txSwitchState((uint8_t *)myNodeID, 7, 1); 
       break;
     
     default:
-      if ((message.identifier & MASK_24BIT) == INTRO_INTERFACE) { // received an interface introduction
-        WebSerial.printf("Received introduction 0x%x\n", message.identifier);
-        sendIntroack((uint8_t*) myNodeID);
-      } else if ((message.identifier & MASK_24BIT) == INTRO_BOX) { // received a box introduction
-        WebSerial.printf("Received introduction 0x%x\n", message.identifier);
-        sendIntroack((uint8_t*) myNodeID);
+      if ((message.identifier & MASK_24BIT) == (INTRO_INTERFACE)) { // received an interface introduction
+        WebSerial.printf("RX: IFACE intro from %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
+        txIntroack((uint8_t*) otherNodeID);
+      } else
+      if ((message.identifier & MASK_24BIT) == (INTRO_BOX)) { // received an interface introduction
+        WebSerial.printf("RX: BOX intro from %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
+        txIntroack((uint8_t*) otherNodeID);
+        txSwitchState((uint8_t *)otherNodeID, 7, 1); 
+        txSwitchState((uint8_t *)otherNodeID, 7, 0); 
+        txSwitchState((uint8_t *)otherNodeID, 7, 2);   
       }
       break;
   }
@@ -571,7 +572,11 @@ void TaskTWAI(void *pvParameters) {
       leds[0] = CRGB::Blue;
       FastLED.show();
       previousMillis = currentMillis;
-      send_message(REQ_INTERFACES, NULL, 0); // send interface introduction request
+      #ifdef M5PICO
+      send_message(REQ_BOXES, NULL, 0); // send interface introduction request
+      #elif M5STACK
+      // send_message(REQ_INTERFACES, NULL, 0); // send interface introduction request
+      #endif
     }
     vTaskDelay(10);
   }
