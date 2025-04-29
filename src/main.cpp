@@ -529,6 +529,7 @@ static void handle_rx_message(twai_message_t &message) {
       FLAG_BEGIN_NORMAL_OPER = false; // clear flag to halt normal operation
       vTaskDelay(10);
       txSendHalt((uint8_t *)otherNodeID); // send halt message to other node
+      introMsgPtr = introMsgPtr + 1;
       break;
     case REQ_INTERFACES: // request for interface introduction     
       WebSerial.printf("RX: IFACE intro req, responding to %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
@@ -769,8 +770,13 @@ void setup() {
   leds[0] = CRGB::Black;
   FastLED.show();
 
-  Serial.begin(115200);
+  #ifdef M5PICO
+  Serial.begin(9600, SERIAL_8N1, 19, 18); // alternate serial port
+  Serial.println("Hello, world!");
+  #else
+  Serial.begin(115200); // alternate serial port
   Serial.setDebugOutput(true);
+  #endif
 
   WiFi.onEvent(WiFiEvent);
   WiFi.mode(WIFI_MODE_APSTA);
