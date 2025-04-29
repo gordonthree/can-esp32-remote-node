@@ -51,7 +51,12 @@ volatile uint8_t nodeSwitchMode[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // switch mode
 
 volatile uint8_t testState[3] = {1, 0, 2}; // test state
 volatile uint8_t testPtr = 0; // test pointer
+volatile uint8_t testRestart = true; // set flag to true to restart test message squence
 
+volatile uint16_t introMsg[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // intro messages
+volatile uint8_t  introMsgPtr = 0; // intro message pointer
+volatile uint8_t  introMsgData[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // intro message data
+volatile uint8_t  introMsgCnt = 0; // intro message count
 
 #ifdef M5PICO
 const char* AP_SSID  = "m5stamp-pico";
@@ -60,6 +65,8 @@ const char* hostname = "m5stamp-pico";
 const uint8_t* myNodeFeatureMask = FEATURE_IFACE_TOUCHSCREEN_TYPE_A; // node feature mask
 const uint16_t myNodeIntro = REQ_INTERFACES; // intro request for my node type
 const uint8_t otherNodeID[] = {0xFA, 0x61, 0x5D, 0xDC}; // M5STACK node id
+
+
 #elif M5STACK
 const char* AP_SSID  = "m5stack-atom";
 const char* hostname = "m5stack-atom";
@@ -68,6 +75,9 @@ const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4RELAY; // node feature mask
 const uint8_t mySwitchCount = 4;
 const uint16_t myNodeIntro = REQ_BOXES; // intro request for my node type
 const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
+
+
+
 #else
 const char* AP_SSID  = "candisplay";
 const char* hostname = "candisplay";
@@ -91,20 +101,7 @@ unsigned long ota_progress_millis = 0;
 static volatile bool wifi_connected = false;
 static volatile uint8_t myNodeID[] = {0, 0, 0, 0}; // node ID
 
-void recvMsg(uint8_t *data, size_t len){
-  WebSerial.println("Received Data...");
-  String d = "";
-  for(int i=0; i < len; i++){
-    d += char(data[i]);
-  }
-  WebSerial.println(d);
-  if (d == "ON"){
-    // digitalWrite(LED, HIGH);
-  }
-  if (d=="OFF"){
-    // digitalWrite(LED, LOW);
-  }
-}
+
 
 void readMacAddress(){
   uint8_t baseMac[6];
@@ -181,25 +178,31 @@ void WiFiEvent(WiFiEvent_t event){
     } */
 }
 
-static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
+static void send_message(uint16_t msgID, uint8_t *msgData, uint8_t dlc) {
   static twai_message_t message;
-  static uint8_t dataBytes[] = {0, 0, 0, 0, 0, 0, 0, 0}; // initialize dataBytes array with 8 bytes of 0
+  // static uint8_t dataBytes[] = {0, 0, 0, 0, 0, 0, 0, 0}; // initialize dataBytes array with 8 bytes of 0
 
   leds[0] = CRGB::Blue;
   FastLED.show();
+
   // Format message
-  message.identifier = msgid;       // set message ID
+  message.identifier = msgID;       // set message ID
   message.extd = 0;                 // 0 = standard frame, 1 = extended frame
   message.rtr = 0;                  // 0 = data frame, 1 = remote frame
   message.self = CAN_SELF_MSG;      // 0 = normal transmission, 1 = self reception request 
   message.dlc_non_comp = 0;         // non-compliant DLC (0-8 bytes)  
   message.data_length_code = dlc;   // data length code (0-8 bytes)
-  memcpy(message.data, data, dlc);  // copy data to message data field 
+  memcpy(message.data, (const uint8_t*) msgData, dlc);  // copy data to message data field 
   
   // Queue message for transmission
   if (twai_transmit(&message, pdMS_TO_TICKS(3000)) == ESP_OK) {
     // ESP_LOGI(TAG, "Message queued for transmission\n");
     // printf("Message queued for transmission\n");
+    WebSerial.printf("TX: MSG: %03x Data: ", msgID);
+    for (int i = 0; i < dlc; i++) {
+      WebSerial.printf("%02x ", message.data[i]);
+    }
+    WebSerial.printf("\n");
   } else {
     leds[0] = CRGB::Red;
     FastLED.show();
@@ -207,7 +210,7 @@ static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
     WebSerial.printf("ERR: Failed to queue message for transmission, resetting controller\n");
     twai_initiate_recovery();
     twai_stop();
-    WebSerial.printf("WARN: twai Stoped\n");
+    WebSerial.printf("WARN: twai Stopped\n");
     vTaskDelay(500);
     twai_start();
     WebSerial.printf("WARN: twai Started\n");
@@ -224,7 +227,7 @@ static void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 
 static void rxDisplayMode(uint8_t *data, uint8_t displayMode) {
   static uint8_t rxdisplayID = data[4]; // display id
-  WebSerial.printf("Display: %d Mode: %d\n", rxdisplayID, displayMode);
+  WebSerial.printf("RX: Display: %d Mode: %d\n", rxdisplayID, displayMode);
 
   switch (displayMode) {
     case 0: // display off
@@ -353,11 +356,27 @@ static void rxSwitchMode(uint8_t *data) {
 }
 
 static void txIntroduction() {
-  // send 32-bit node id and 16-bit feature mask
-  static uint8_t dataBytes[6] = { myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], 
-                                  myNodeFeatureMask[0], myNodeFeatureMask[1] }; 
+  if (introMsgPtr < introMsgCnt) {
+    
+    if (introMsgPtr == 0) {
+      static uint8_t dataBytes[6] = { myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], 
+                                      myNodeFeatureMask[0], myNodeFeatureMask[1] }; 
 
-  send_message(CAN_MY_TYPE, dataBytes, sizeof(dataBytes));
+      send_message(introMsg[introMsgPtr], dataBytes, sizeof(dataBytes));
+    } else {
+      static uint8_t dataBytes[5] = { myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], introMsgData[introMsgPtr] }; 
+
+      send_message(CAN_MY_TYPE, dataBytes, sizeof(dataBytes));
+
+    }
+    introMsgPtr = introMsgPtr + 1; // increment intro message pointer
+  }
+}
+
+// send command to clear normal op flag on remote
+static void txSendHalt(uint8_t* txNodeID) {
+  // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55}; // data bytes
+  send_message(MSG_HALT_OPER, txNodeID, 4);
 }
 
 static void txIntroack(uint8_t* txNodeID) {
@@ -366,24 +385,24 @@ static void txIntroack(uint8_t* txNodeID) {
 }
 
 static void nodeCheckStatus() {
+  #ifdef NODE_BOX_SWITCH
   if (FLAG_SEND_INTRODUCTION) {
     // send introduction message to all nodes
     txIntroduction();
     WebSerial.printf("TX: Introduction Message\n");
   }
 
-  if (!FLAG_BEGIN_NORMAL_OPER || FLAG_HALT_NORMAL_OPER) {
+  if (!FLAG_BEGIN_NORMAL_OPER) {
     return; // normal operation not started, exit function
   }
 
-  #ifdef NODE_BOX_SWITCH
   for (uint8_t switchID = 0; switchID < mySwitchCount; switchID++) {
     static uint8_t swState = nodeSwitchState[switchID]; // get switch state
     static uint8_t swMode = nodeSwitchMode[switchID]; // get switch mode
     static uint8_t stateData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
     static uint8_t modeData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, swMode}; // send my own node ID, along with the switch number
       
-    send_message(DATA_OUTPUT_SWITCH_MODE, modeData, sizeof(modeData));  
+    // send_message(DATA_OUTPUT_SWITCH_MODE, modeData, sizeof(modeData));  
     WebSerial.printf("TX: DATA: Switch %d State %d Mode %d\n", switchID, swState, swMode);
 
     switch (swState) {
@@ -409,6 +428,7 @@ static void nodeCheckStatus() {
 
 static void handle_rx_message(twai_message_t &message) {
   // static twai_message_t altmessage;
+
   static bool msgFlag = false;
   leds[0] = CRGB::Orange;
   FastLED.show();
@@ -449,6 +469,16 @@ static void handle_rx_message(twai_message_t &message) {
   // }
 
   switch (message.identifier) {
+    case MSG_NORM_OPER: // normal operation message
+      WebSerial.printf("RX: Normal Operation Message\n");
+      FLAG_BEGIN_NORMAL_OPER = true; // set flag to begin normal operation
+      introMsgPtr = introMsgPtr + 1; // increment intro message pointer 4th step
+      break;
+    case MSG_HALT_OPER: // halt operation message
+      WebSerial.printf("RX: Halt Operation Message\n");
+      introMsgPtr = 0; // reset intro message pointer
+      FLAG_BEGIN_NORMAL_OPER = false; // clear flag to halt normal operation
+      break;
     case SW_SET_OFF:            // set output switch off
       rxSwitchState(message.data, 0);
       break;
@@ -496,35 +526,42 @@ static void handle_rx_message(twai_message_t &message) {
       break;      
     case DATA_OUTPUT_SWITCH_MOM_PUSH:
       txSwitchState((uint8_t *)otherNodeID, 2, 0);
+      FLAG_BEGIN_NORMAL_OPER = false; // clear flag to halt normal operation
+      vTaskDelay(10);
+      txSendHalt((uint8_t *)otherNodeID); // send halt message to other node
       break;
     case REQ_INTERFACES: // request for interface introduction     
-      WebSerial.println("RX: IFACE intro req, responding");
+      WebSerial.printf("RX: IFACE intro req, responding to %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
       FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
       txIntroduction(); // send our introduction message
       break;
     case REQ_BOXES: // request for box introduction
-      WebSerial.println("RX: BOX intro req, responding");
+      WebSerial.printf("RX: BOX intro req, responding to %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
       FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
-      FLAG_BEGIN_NORMAL_OPER = false; // set flag to begin normal operation
-      txIntroduction(); // send our introduction message
       break;
     case ACK_INTRODUCTION:
       WebSerial.println("RX: Intro ACK, clearing flag");    
       FLAG_SEND_INTRODUCTION = false; // stop sending introduction messages
-      FLAG_BEGIN_NORMAL_OPER = true; // set flag to begin normal operation
       break;
     
     default:
-      if ((message.identifier & MASK_24BIT) == (INTRO_INTERFACE)) { // received an interface introduction
-        WebSerial.printf("RX: IFACE intro from %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
-        txIntroack((uint8_t*) otherNodeID);
-      } else
-      if ((message.identifier & MASK_24BIT) == (INTRO_BOX)) { // received an interface introduction
+      // if ((message.identifier & MASK_24BIT) == (INTRO_INTERFACE)) { // received an interface introduction
+      //   static uint8_t respBytes[] = {message.data[0], message.data[1], message.data[2], message.data[3]}; // node that sent the intro
+      //   WebSerial.printf("RX: IFACE intro from %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
+      //   txIntroack((uint8_t*) respBytes);
+      // } else
+      if ((message.identifier & MASK_24BIT) == (INTRO_BOX)) { // received a box introduction
+        static uint8_t respBytes[] = {message.data[0], message.data[1], message.data[2], message.data[3]}; // node that sent the intro
         WebSerial.printf("RX: BOX intro from %02x:%02x:%02x:%02x\n", message.data[0], message.data[1], message.data[2], message.data[3]);
-        txIntroack((uint8_t*) otherNodeID);
-        txSwitchState((uint8_t *)otherNodeID, 2, 1); 
-        txSwitchState((uint8_t *)otherNodeID, 2, 0); 
-           
+        txIntroack((uint8_t*) respBytes);
+        introMsgPtr = introMsgPtr + 1; // increment intro message pointer 2nd step
+      } else
+      if ((message.identifier & MASK_25BIT) == (INTRO_OUTPUT)) { // received an output introduction
+        static uint8_t rxSwCnt = 0; // rx switch count
+        static uint8_t respBytes[] = {message.data[0], message.data[1], message.data[2], message.data[3]}; // node that sent the intro
+        WebSerial.printf("RX: OUTP intro from %02x:%02x:%02x:%02x CNT: %d\n", message.data[0], message.data[1], message.data[2], message.data[3], rxSwCnt);
+        txIntroack((uint8_t*) respBytes);
+        introMsgPtr = introMsgPtr + 1; // increment intro message pointer 3rd step
       }
       break;
   }
@@ -537,9 +574,14 @@ static void handle_rx_message(twai_message_t &message) {
 void TaskTWAI(void *pvParameters) {
   // give some time at boot the cpu setup other parameters
   vTaskDelay(1000 / portTICK_PERIOD_MS);
+  leds[0] = CRGB::Red;
+  FastLED.show();
 
   // Initialize configuration structures using macro initializers
-  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NO_ACK);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
+  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
+  #ifdef M5PICO
+  g_config.rx_queue_len = 10; // RX queue length
+  #endif
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();  //Look in the api-reference for other speed sets.
   twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
@@ -615,8 +657,6 @@ void TaskTWAI(void *pvParameters) {
     }
 
     if (alerts_triggered & TWAI_ALERT_RX_QUEUE_FULL) {
-      leds[0] = CRGB::Red;
-      FastLED.show();
       WebSerial.println("Alert: The RX queue is full causing a received frame to be lost.");
       WebSerial.printf("RX buffered: %d\t", twaistatus.msgs_to_rx);
       WebSerial.printf("RX missed: %d\t", twaistatus.rx_missed_count);
@@ -625,9 +665,7 @@ void TaskTWAI(void *pvParameters) {
 
     // Check if message is received
     if (alerts_triggered & TWAI_ALERT_RX_DATA) {
-      // leds[0] = CRGB::Yellow;
-      // FastLED.show();
-      // Serial.println("Testing line");
+
       // One or more messages received. Handle all.
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
@@ -641,14 +679,35 @@ void TaskTWAI(void *pvParameters) {
       FastLED.show();
       previousMillis = currentMillis;
       #ifdef M5PICO
-      send_message(REQ_BOXES, NULL, 0); // send interface introduction request
-      #elif M5STACK
-      // send_message(REQ_INTERFACES, NULL, 0); // send interface introduction request
+      if (introMsgPtr < introMsgCnt) {
+        if (introMsg[introMsgPtr] > 0) {
+          send_message(introMsg[introMsgPtr], (uint8_t*) myNodeID, 4); // send introduction request
+        }
+        if (introMsgPtr == 0) {
+          introMsgPtr = introMsgPtr + 1; // increment intro message pointer 1st step
+        }
+      }
       #endif
       nodeCheckStatus();
     }
     vTaskDelay(10);
 
+  }
+}
+
+void recvMsg(uint8_t *data, size_t len){
+  WebSerial.println("Received Data...");
+  String d = "";
+  for(int i=0; i < len; i++){
+    d += char(data[i]);
+  }
+  WebSerial.println(d);
+  if (d == "ON"){
+    send_message(introMsg[0], (uint8_t*) myNodeID, 4); // send introduction request
+    // digitalWrite(LED, HIGH);
+  }
+  if (d=="OFF"){
+    // digitalWrite(LED, LOW);
   }
 }
 
@@ -661,6 +720,24 @@ void printWifi() {
 }
 
 void setup() {
+
+  #ifdef M5PICO
+  introMsgCnt = 4; // number of intro messages
+  introMsgPtr = 0; // start at zero
+  introMsg[0] = (uint16_t) REQ_BOXES; // ask for boxes
+  introMsg[1] = 0; // first ack introduction
+  introMsg[2] = 0; // second ack introduction
+  introMsg[3] = (uint16_t) MSG_NORM_OPER; // send normal operation message  
+  #elif M5STACK
+  introMsgCnt = 2; // number of intro messages
+  introMsgPtr = 0; // start at zero
+  introMsg[0] = (uint16_t) BOX_SW_4RELAY; // intro message for 4 relay switch box
+  introMsg[1] = (uint16_t) OUT_MECH_RELAY; // intro message for mechanical relay
+  
+  introMsgData[0] = 0x00; // send feature mask
+  introMsgData[1] = mySwitchCount; // four relays  
+  #endif
+
   delay(5000);
 
   // Timer0_Cfg = timerBegin(0, 80, true);

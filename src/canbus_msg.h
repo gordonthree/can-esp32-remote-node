@@ -2,11 +2,13 @@
 #define CAN_MSG_ID_H
 
 // bitmasks for message IDs
-#define MASK_24BIT 0xFF0 // returns 0x700 if message ID is between 0x700 and 0x70F
+#define MASK_24BIT 0xFF0 // returns 0x7x0 if message ID is between 0x7x0 and 0x7xF
+#define MASK_25BIT 0xFF8 // returns 0x7x8 if message ID is between 0x7x8 and 0x7XF
 
 // introduction message types
 #define INTRO_INTERFACE 0x700 // introduction messages for interface nodes
 #define INTRO_BOX       0x750 // introduction messages for box nodes
+#define INTRO_OUTPUT    0x718 // introduction messages for output nodes
 
 // feature masks for node types
 const uint8_t FEATURE_BOX_SW_6GANG_HIGH[] = {0x8E,0xC0};     // feature mask for 6-gang switch box, 4 high, 2 low
