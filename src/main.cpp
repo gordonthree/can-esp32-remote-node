@@ -79,8 +79,8 @@ const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
 
 
 #else
-const char* AP_SSID  = "candisplay";
-const char* hostname = "candisplay";
+const char* AP_SSID  = "m5pico2";
+const char* hostname = "m5pico2";
 #define CAN_MY_TYPE DISP_LCD // LCD display
 const uint8_t* myNodeFeatureMask = FEATURE_DISP_LCD; // node feature mask
 const uint16_t myNodeIntro = REQ_DISPLAYS; // intro request for my node type
@@ -704,7 +704,9 @@ void recvMsg(uint8_t *data, size_t len){
   }
   WebSerial.println(d);
   if (d == "ON"){
+    #ifdef M5PICO
     send_message(introMsg[0], (uint8_t*) myNodeID, 4); // send introduction request
+    #endif
     // digitalWrite(LED, HIGH);
   }
   if (d=="OFF"){
@@ -841,7 +843,6 @@ void setup() {
   // WebSerial is accessible at "<IP Address>/webserial" in browser
   WebSerial.begin(&server);
   WebSerial.onMessage(recvMsg);
-
   Serial.print("[DEFAULT] ESP32 Board MAC Address: ");
   readMacAddress();
   printWifi();
