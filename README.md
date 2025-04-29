@@ -3,6 +3,17 @@ Part of the CAN Bus node project.
 
 This node supports the non user-interface functions, such as switch outputs and temperature sensors.
 
+nodeDB structure pseudo code 
+```
+struct remoteNode {
+   uint8_t   nodeID[4]; // four byte node identifier 
+   uint16_t  nodeType; // first introduction type
+   uint16_t  subModules[4]; // introductions for up to four sub modules 
+   uint8_t   moduleCnt; // sub module count
+   uint32_t  lastSeen; // unix timestamp 
+};
+```
+
 Json sample code
 
 ```
