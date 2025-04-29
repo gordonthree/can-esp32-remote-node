@@ -12,6 +12,7 @@ struct remoteNode {
    uint8_t   moduleCnt; // sub module count
    uint32_t  lastSeen; // unix timestamp 
 };
+```
 
 Json sample code
 
