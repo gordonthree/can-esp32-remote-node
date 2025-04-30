@@ -521,7 +521,7 @@ static void handle_rx_message(twai_message_t &message) {
       // txSendHalt((uint8_t *)otherNodeID); // send halt message to other node
       // introMsgPtr = introMsgPtr + 1;
       break;
-    case REQ_BOXES: // request for box introduction
+    case REQ_BOXES: // request for box introduction, kicks off the introduction sequence
       if (haveRXID) { // check if REQ message contains node id
         WebSerial.printf("RX: REQ BOX Responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
         introMsgPtr = 0; // reset intro message pointer
@@ -532,7 +532,7 @@ static void handle_rx_message(twai_message_t &message) {
       if (msgFlag) { // message was sent to our ID
         WebSerial.println("RX: ACK MATCH ID");
         if (introMsgPtr < introMsgCnt) {
-          FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
+          FLAG_SEND_INTRODUCTION = true; // keep sending introductions until all messages have been acknowledged
           introMsgPtr = introMsgPtr + 1; // increment intro message pointer 1st step
         } else {
           WebSerial.printf("RX: INTRO ACK: DONE %d\n", introMsgPtr);  
