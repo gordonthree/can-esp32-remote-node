@@ -30,6 +30,7 @@ static AsyncWebServer server(80);
 
 // esp32 native TWAI / CAN library
 #include "driver/twai.h"
+TaskHandle_t canbus_task_handle = NULL; // task handle for canbus task
 
 // my canbus stuff
 #include "canbus_msg.h"
@@ -38,7 +39,7 @@ static AsyncWebServer server(80);
 #define CAN_SELF_MSG 0
 
 // Interval:
-#define TRANSMIT_RATE_MS 1000
+#define TRANSMIT_RATE_MS 4000
 #define POLLING_RATE_MS 1000
 
 // time stuff
@@ -174,7 +175,7 @@ void WiFiEvent(WiFiEvent_t event){
  
 }
 
-static void send_message(uint16_t msgID, uint8_t *msgData, uint8_t dlc) {
+static void send_message(const uint16_t msgID, const uint8_t *msgData, const uint8_t dlc) {
   twai_message_t message;
   // static uint8_t dataBytes[] = {0, 0, 0, 0, 0, 0, 0, 0}; // initialize dataBytes array with 8 bytes of 0
 
@@ -193,12 +194,14 @@ static void send_message(uint16_t msgID, uint8_t *msgData, uint8_t dlc) {
   // Queue message for transmission
   if (twai_transmit(&message, pdMS_TO_TICKS(3000)) == ESP_OK) {
     // ESP_LOGI(TAG, "Message queued for transmission\n");
+    WebSerial.printf("TX: MSG: %03x WITH %u DATA", msgID, dlc);
+
     // printf("Message queued for transmission\n");
     // WebSerial.printf("TX: MSG: %03x Data: ", msgID);
-    for (int i = 0; i < dlc; i++) {
-      WebSerial.printf("%02x ", message.data[i]);
-    }
-    WebSerial.printf("\n");
+    // for (int i = 0; i < dlc; i++) {
+    //   WebSerial.printf("%02x ", message.data[i]);
+    // }
+    // WebSerial.printf("\n");
   } else {
     leds[0] = CRGB::Red;
     FastLED.show();
@@ -431,7 +434,7 @@ static void handle_rx_message(twai_message_t &message) {
   FastLED.show();
 
   // check if message contains enough data to have node id
-  if (message.data_length_code > 3) { 
+  if (message.data_length_code >= 3) { 
     memcpy((void *)rxNodeID, (const void *)message.data, 4); // copy node id from message
     msgIDComp = memcmp((const void *)rxNodeID, (const void *)myNodeID, 4);
     haveRXID = true; // set flag to true if message contains node id
@@ -441,21 +444,25 @@ static void handle_rx_message(twai_message_t &message) {
     }
   }
 
-  /* if (message.data_length_code > 0) { // message contains data, check if it is for us
+  if ((!msgFlag) && (message.identifier <= 0x13F)) { // switch control message but not for us
+    return; // exit function
+  } 
+
+  if (message.data_length_code > 0) { // message contains data, check if it is for us
     if (msgFlag) {
-      WebSerial.printf("RX: ID MATCH MSG: %03x WITH DATA\n", message.identifier);
+      WebSerial.printf("RX: MATCH MSG: %03x WITH %u DATA\n", message.identifier, message.data_length_code);
     } else {
-      WebSerial.printf("RX: NO MATCH MSG: %03x WITH DATA\n", message.identifier);
+      WebSerial.printf("RX: NO MATCH MSG: %03x WITH %u DATA\n", message.identifier, message.data_length_code);
     }
 
     WebSerial.println("");
   } else {
     if (msgFlag) {
-      WebSerial.printf("RX: ID MATCH MSG: %03x NO DATA\n", message.identifier);
+      WebSerial.printf("RX: MATCH MSG: %03x NO DATA\n", message.identifier);
     } else {
       WebSerial.printf("RX: NO MATCH MSG: %03x NO DATA\n", message.identifier);
     } 
-  }*/
+  }
 
 
   switch (message.identifier) {
@@ -556,9 +563,12 @@ void TaskTWAI(void *pvParameters) {
 
   // Initialize configuration structures using macro initializers
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
+  g_config.rx_queue_len = 20; // RX queue length
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();  //Look in the api-reference for other speed sets.
   // twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL(); // accept all messages
-  twai_filter_config_t f_config = {.acceptance_code = 0x1<<28, .acceptance_mask = 0x7<26, .single_filter = true}; // accept only messages with ID between 0x100 and 0x13F
+  twai_filter_config_t f_config = {.acceptance_code = ((0x13F << 16) | (0x100 << 1)), // filter
+                                   .acceptance_mask = 0xE3FFEEFF, // 0b1111111011110101 0b1111111011110100
+                                   .single_filter = false}; // accept only messages 0x108 and 0x10a
 
 
   // Install TWAI driver
@@ -655,27 +665,12 @@ void TaskTWAI(void *pvParameters) {
       FastLED.show();
       previousMillis = currentMillis;
 
-      printEpoch();
+      WebSerial.printf(".");
+
       nodeCheckStatus();
     }
     vTaskDelay(10);
 
-  }
-}
-
-void recvMsg(uint8_t *data, size_t len){
-  WebSerial.println("Received Data...");
-  String d = "";
-  for(int i=0; i < len; i++){
-    d += char(data[i]);
-  }
-  WebSerial.println(d);
-  if (d == "ON"){
-
-    // digitalWrite(LED, HIGH);
-  }
-  if (d=="OFF"){
-    FLAG_BEGIN_NORMAL_OPER = false; // clear flag to halt normal operation
   }
 }
 
@@ -685,6 +680,40 @@ void printWifi() {
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+}
+
+
+void recvMsg(uint8_t *data, size_t len){
+  WebSerial.println("Received Data...");
+  String d = "";
+  for(int i=0; i < len; i++){
+    d += char(data[i]);
+  }
+  WebSerial.println(d);
+
+  if (d == "C0"){
+    vTaskSuspend(canbus_task_handle); // suspend canbus task
+    // digitalWrite(LED, HIGH);
+  }
+  if (d == "C1"){
+    vTaskResume(canbus_task_handle); // resume canbus task
+    // digitalWrite(LED, HIGH);
+  }
+  if (d == "W"){
+    printWifi();
+    // digitalWrite(LED, HIGH);
+  }
+
+  if (d=="LIST"){
+    // dumpNodeList();
+    // digitalWrite(LED, LOW);
+  }
+  if (d == "ON"){
+    FLAG_BEGIN_NORMAL_OPER = true; // flag to start normal operation
+  }
+  if (d=="OFF"){
+    FLAG_BEGIN_NORMAL_OPER = false; // clear flag for normal operation
+  }
 }
 
 void setup() {
@@ -717,15 +746,15 @@ void setup() {
   // timerAlarmWrite(Timer0_Cfg, 100000, true);
   // timerAlarmEnable(Timer0_Cfg);
 
-  xTaskCreate(
+  xTaskCreatePinnedToCore(
     TaskTWAI,     // Task function.
     "Task TWAI",  // name of task.
     3172,         // Stack size of task
     NULL,         // parameter of the task
     1,            // priority of the task
-    NULL          // Task handle to keep track of created task
-  );              // pin task to core 0
-  //tskNO_AFFINITY); // pin task to core is automatic depends the load of each core
+    &canbus_task_handle,           // Task handle to keep track of created task
+    tskNO_AFFINITY); // allow task to run on either core, automatic depends the load of each core
+  // );  
 
   // xTaskCreate(
   //   TaskFLED,     // Task function.
