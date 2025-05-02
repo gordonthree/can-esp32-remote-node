@@ -433,7 +433,7 @@ static void handle_rx_message(twai_message_t &message) {
   leds[0] = CRGB::Orange;
   FastLED.show();
   
-  WebSerial.printf("RX: MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
+  // WebSerial.printf("RX: MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
 
   // check if message contains enough data to have node id
   if (message.data_length_code >= 3) { 
@@ -447,18 +447,16 @@ static void handle_rx_message(twai_message_t &message) {
   }
 
 
-  if ((!msgFlag) && (message.identifier <= 0x17F)) { // switch control message but not for us
-    return; // exit function
-  } 
+  // if ((!msgFlag) && (message.identifier <= 0x17F)) { // switch control message but not for us
+  //   return; // exit function
+  // } 
 
   if (message.data_length_code > 0) { // message contains data, check if it is for us
     if (msgFlag) {
-      WebSerial.printf("RX: MATCH MSG: %03x WITH %u DATA\n", message.identifier, message.data_length_code);
+      WebSerial.printf("RX: MATCH MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
     } else {
-      WebSerial.printf("RX: NO MATCH MSG: %03x WITH %u DATA\n", message.identifier, message.data_length_code);
+      WebSerial.printf("RX: NO MATCH MSG: %03x DATA: u%\n", message.identifier, message.data_length_code);
     }
-
-    WebSerial.println("");
   } else {
     if (msgFlag) {
       WebSerial.printf("RX: MATCH MSG: %03x NO DATA\n", message.identifier);
@@ -564,11 +562,18 @@ void TaskTWAI(void *pvParameters) {
   leds[0] = CRGB::Red;
   FastLED.show();
 
-  const uint16_t filterF1 = (0x110 << 5);            // 0x110:0x17f are switch control codse, 
+  // hardware acceptance filter
+  // filter 0x100:0x17f and 0x410:0x47f
+  // filter also contains DB1 of the node ID  
+  const uint16_t filterF1 = (0x100 << 5) | (myNodeID[0] >> 4);            
+  const uint16_t filterF2 = (0x400 << 5) | (myNodeID[0] & 0x0F);  
+  // const uint32_t maskF1F2 = (uint32_t) 0xF00FF00F;
+  const uint32_t maskF1F2 = (uint32_t) 0xFF00FF0;
 
-  const uint16_t filterF2 = (0x410 << 5);            // 0x410:0x47f are sub-module request codes,
+  // const uint16_t filterF1 = (0x110 << 5);            // 0x110:0x17f are switch control codse, 
+  // const uint16_t filterF2 = (0x410 << 5);            // 0x410:0x47f are sub-module request codes,
+  // const uint32_t maskF1F2 = (uint32_t) 0xF000F000;
 
-  const uint32_t maskF1F2 = 0xF000F000;
   // Initialize configuration structures using macro initializers
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
   g_config.rx_queue_len = 20; // RX queue length
@@ -576,11 +581,18 @@ void TaskTWAI(void *pvParameters) {
   // 3. Configure the acceptance filter
   // Hardware filter will accept IDs 0x100 through 0x17F
   twai_filter_config_t f_config = {
-    .acceptance_code = (uint32_t)0x20000000, // (0x100 << 21)
-    .acceptance_mask = (uint32_t)0xF87F0000,
-    .single_filter = true          // Confirm single filter mode
+    .acceptance_code = (((uint32_t) filterF1<<16) | ((uint32_t) filterF2)), // (0x100 << 21)
+    .acceptance_mask = maskF1F2,
+    .single_filter = false          // Confirm single filter mode
   };
 
+  // twai_filter_config_t f_config = {
+  //   .acceptance_code = (uint32_t)0x20000000, // (0x100 << 21)
+  //   .acceptance_mask = (uint32_t)0xF0000000,
+  //   .single_filter = true          // Confirm single filter mode
+  // };
+
+  
   // Install TWAI driver
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
     WebSerial.println("Driver installed");
@@ -675,7 +687,8 @@ void TaskTWAI(void *pvParameters) {
       FastLED.show();
       previousMillis = currentMillis;
 
-      WebSerial.printf(".");
+      // WebSerial.printf("Acc code %x Acc mask %x\n", f_config.acceptance_code, f_config.acceptance_mask);
+      WebSerial.printf(".\n");
 
       nodeCheckStatus();
     }
@@ -800,6 +813,7 @@ void setup() {
 
     // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
     Serial.println("Start updating " + type);
+    vTaskSuspend(canbus_task_handle); // suspend canbus task
   })
   .onEnd([]() {
     Serial.println("\nEnd");
