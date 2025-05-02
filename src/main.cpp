@@ -404,7 +404,7 @@ static void nodeCheckStatus() {
     uint8_t modeData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, swMode}; // send my own node ID, along with the switch number
       
     // send_message(DATA_OUTPUT_SWITCH_MODE, modeData, sizeof(modeData));  
-    WebSerial.printf("TX: DATA: Switch %d State %d Mode %d\n", switchID, swState, swMode);
+    // WebSerial.printf("TX: DATA: Switch %d State %d Mode %d\n", switchID, swState, swMode);
 
     switch (swState) {
       case 0: // switch off
@@ -432,6 +432,8 @@ static void handle_rx_message(twai_message_t &message) {
 
   leds[0] = CRGB::Orange;
   FastLED.show();
+  
+  WebSerial.printf("RX: MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
 
   // check if message contains enough data to have node id
   if (message.data_length_code >= 3) { 
@@ -444,7 +446,8 @@ static void handle_rx_message(twai_message_t &message) {
     }
   }
 
-  if ((!msgFlag) && (message.identifier <= 0x13F)) { // switch control message but not for us
+
+  if ((!msgFlag) && (message.identifier <= 0x17F)) { // switch control message but not for us
     return; // exit function
   } 
 
@@ -561,14 +564,19 @@ void TaskTWAI(void *pvParameters) {
   leds[0] = CRGB::Red;
   FastLED.show();
 
+  const uint16_t filterF1 = (0x110 << 5);            // 0x110:0x17f are switch control codse, 
+
+  const uint16_t filterF2 = (0x410 << 5);            // 0x410:0x47f are sub-module request codes,
+
+  const uint32_t maskF1F2 = 0xF000F000;
   // Initialize configuration structures using macro initializers
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
   g_config.rx_queue_len = 20; // RX queue length
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();  //Look in the api-reference for other speed sets.
   // twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL(); // accept all messages
-  twai_filter_config_t f_config = {.acceptance_code = ((0x13F << 16) | (0x100 << 1)), // filter
-                                   .acceptance_mask = 0xE3FFEEFF, // 0b1111111011110101 0b1111111011110100
-                                   .single_filter = false}; // accept only messages 0x108 and 0x10a
+  twai_filter_config_t f_config = {.acceptance_code = (uint32_t)((uint16_t)(filterF1 << 16) | (uint16_t)filterF2), 
+                                   .acceptance_mask = maskF1F2, // 
+                                   .single_filter = false}; 
 
 
   // Install TWAI driver
