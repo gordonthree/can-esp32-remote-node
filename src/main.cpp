@@ -573,11 +573,13 @@ void TaskTWAI(void *pvParameters) {
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX_PIN, (gpio_num_t)CAN_RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
   g_config.rx_queue_len = 20; // RX queue length
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();  //Look in the api-reference for other speed sets.
-  // twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL(); // accept all messages
-  twai_filter_config_t f_config = {.acceptance_code = (uint32_t)((uint16_t)(filterF1 << 16) | (uint16_t)filterF2), 
-                                   .acceptance_mask = maskF1F2, // 
-                                   .single_filter = false}; 
-
+  // 3. Configure the acceptance filter
+  // Hardware filter will accept IDs 0x100 through 0x17F
+  twai_filter_config_t f_config = {
+    .acceptance_code = (uint32_t)0x20000000, // (0x100 << 21)
+    .acceptance_mask = (uint32_t)0xF87F0000,
+    .single_filter = true          // Confirm single filter mode
+  };
 
   // Install TWAI driver
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
