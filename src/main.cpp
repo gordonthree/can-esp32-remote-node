@@ -39,7 +39,7 @@ TaskHandle_t canbus_task_handle = NULL; // task handle for canbus task
 #define CAN_SELF_MSG 0
 
 // Interval:
-#define TRANSMIT_RATE_MS 4000
+uint16_t TRANSMIT_RATE_MS = 4000;
 #define POLLING_RATE_MS 1000
 
 // time stuff
@@ -179,7 +179,7 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
   twai_message_t message;
   // static uint8_t dataBytes[] = {0, 0, 0, 0, 0, 0, 0, 0}; // initialize dataBytes array with 8 bytes of 0
 
-  leds[0] = CRGB::Blue;
+  leds[0] = CRGB::Orange;
   FastLED.show();
 
   // Format message
@@ -194,7 +194,7 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
   // Queue message for transmission
   if (twai_transmit(&message, pdMS_TO_TICKS(3000)) == ESP_OK) {
     // ESP_LOGI(TAG, "Message queued for transmission\n");
-    WebSerial.printf("TX: MSG: %03x WITH %u DATA", msgID, dlc);
+    // WebSerial.printf("TX: MSG: %03x WITH %u DATA", msgID, dlc);
 
     // printf("Message queued for transmission\n");
     // WebSerial.printf("TX: MSG: %03x Data: ", msgID);
@@ -224,7 +224,7 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
   // vTaskDelay(100);
 }
 
-static void rxDisplayMode(uint8_t *data, uint8_t displayMode) {
+static void rxDisplayMode(const uint8_t *data, const uint8_t displayMode) {
   static uint8_t rxdisplayID = data[4]; // display id
   WebSerial.printf("RX: Display: %d Mode: %d\n", rxdisplayID, displayMode);
 
@@ -268,40 +268,12 @@ static void rxPWMFreq(uint8_t *data) {
   static uint16_t PWMFreq = (data[5] << 8) | data[6]; // pwm frequency 
 }
 
-static void txSwitchState(uint8_t *nodeID, uint8_t switchID, uint8_t swState) {
-  if (nodeID == NULL) {
-    // WebSerial.println("Invalid node ID");
-    return;
-  }
-
-  static uint8_t txDLC = 5;
-  static uint8_t dataBytes[] = {nodeID[0], nodeID[1], nodeID[2], nodeID[3], switchID}; // set node id and switch ID
-  
-  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d State %d\n", nodeID[0],nodeID[1],nodeID[2],nodeID[3], switchID, swState);
-
-  switch (swState) {
-    case 0: // switch off
-      send_message(SW_SET_OFF, dataBytes, txDLC);
-
-      break;
-    case 1: // switch on
-      send_message(SW_SET_ON, dataBytes, txDLC);
-      break;
-    case 2: // momentary press
-      send_message(SW_MOM_PRESS, dataBytes, txDLC);
-      break;
-    default: // unsupported state
-      // WebSerial.println("Invalid switch state for transmission");
-      break;
-  }
-}
-
-static void rxSwitchState(uint8_t *data, uint8_t swState) {
-  static uint8_t switchID = data[4]; // switch ID 
+static void rxSwitchState(const uint8_t *data, const uint8_t swState) {
+  uint8_t switchID = data[4]; // switch ID 
   // static uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
-  static uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
+  uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
 
-  // WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
+  WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
   nodeSwitchState[switchID] = swState; // update switch state
   
 
@@ -323,18 +295,11 @@ static void rxSwitchState(uint8_t *data, uint8_t swState) {
   }
 }
 
-static void txSwitchMode(uint8_t *data, uint8_t switchID, uint8_t switchMode) {
-  static uint8_t txDLC = 6;
-  static uint8_t dataBytes[] = {data[0], data[1], data[2], data[3], switchID, switchMode}; // set node id switch ID
-  WebSerial.printf("TX: To %02x:%02x:%02x:%02x Switch %d Mode %d\n",data[0], data[1], data[2], data[3], switchID, switchMode);
-  send_message(SW_SET_MODE, dataBytes, sizeof(dataBytes)); // send message to set switch mode
-}
+static void rxSwitchMode(const uint8_t *data) {
+  uint8_t switchID = data[4]; // switch ID 
+  uint8_t switchMode = data[5]; // switch mode
 
-static void rxSwitchMode(uint8_t *data) {
-  static uint8_t switchID = data[4]; // switch ID 
-  static uint8_t switchMode = data[5]; // switch mode
-
-  static uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, switchMode}; // send my own node ID, along with the switch number
+  uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, switchMode}; // send my own node ID, along with the switch number
 
   WebSerial.printf("RX: Set Switch %d State %d\n", switchID, switchMode);
   // send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
@@ -453,13 +418,13 @@ static void handle_rx_message(twai_message_t &message) {
 
   if (message.data_length_code > 0) { // message contains data, check if it is for us
     if (msgFlag) {
-      WebSerial.printf("RX: MATCH MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
+      // WebSerial.printf("RX: MATCH MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
     } else {
       WebSerial.printf("RX: NO MATCH MSG: %03x DATA: u%\n", message.identifier, message.data_length_code);
     }
   } else {
     if (msgFlag) {
-      WebSerial.printf("RX: MATCH MSG: %03x NO DATA\n", message.identifier);
+      // WebSerial.printf("RX: MATCH MSG: %03x NO DATA\n", message.identifier);
     } else {
       WebSerial.printf("RX: NO MATCH MSG: %03x NO DATA\n", message.identifier);
     } 
@@ -665,6 +630,8 @@ void TaskTWAI(void *pvParameters) {
     }
 
     if (alerts_triggered & TWAI_ALERT_RX_QUEUE_FULL) {
+      leds[0] = CRGB::Red;
+      FastLED.show();
       WebSerial.println("Alert: The RX queue is full causing a received frame to be lost.");
       WebSerial.printf("RX buffered: %d\t", twaistatus.msgs_to_rx);
       WebSerial.printf("RX missed: %d\t", twaistatus.rx_missed_count);
@@ -673,18 +640,21 @@ void TaskTWAI(void *pvParameters) {
 
     // Check if message is received
     if (alerts_triggered & TWAI_ALERT_RX_DATA) {
-
+      leds[0] = CRGB::Blue;
+      FastLED.show();
       // One or more messages received. Handle all.
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
         handle_rx_message(message);
       }
+      leds[0] = CRGB::Black;
+      FastLED.show();
     }
-    // Send message
+    // Send message, this is the polling section
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= TRANSMIT_RATE_MS) {
-      leds[0] = CRGB::Blue;
-      FastLED.show();
+      // leds[0] = CRGB::Blue;
+      // FastLED.show();
       previousMillis = currentMillis;
 
       // WebSerial.printf("Acc code %x Acc mask %x\n", f_config.acceptance_code, f_config.acceptance_mask);
@@ -727,6 +697,43 @@ void recvMsg(uint8_t *data, size_t len){
     // digitalWrite(LED, HIGH);
   }
 
+  if (d == "TIME"){
+    printEpoch();
+    // digitalWrite(LED, HIGH);
+  }
+
+  if (d == "FAST"){
+   TRANSMIT_RATE_MS = 1000;
+    WebSerial.printf("\nTX Rate: %d ms\n", TRANSMIT_RATE_MS);
+    // digitalWrite(LED, HIGH); 
+  }
+
+  if (d == "FSTR"){
+    TRANSMIT_RATE_MS = TRANSMIT_RATE_MS - 250;
+     WebSerial.printf("\nTX Rate: %d ms\n", TRANSMIT_RATE_MS);
+     // digitalWrite(LED, HIGH); 
+   }
+
+  if (d == "SLOW"){
+    TRANSMIT_RATE_MS = 4000;
+    WebSerial.printf("\nTX Rate: %d ms\n", TRANSMIT_RATE_MS);
+    // digitalWrite(LED, HIGH); 
+  }
+
+
+  if (d == "RESTART"){
+    WebSerial.println("Restarting...");
+    ESP.restart();
+    // digitalWrite(LED, HIGH);
+  }
+
+  if (d == "NODEID"){
+    WebSerial.printf("Node ID: %02x:%02x:%02x:%02x\n", myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3]);
+    // digitalWrite(LED, HIGH);
+  }
+
+
+    
   if (d=="LIST"){
     // dumpNodeList();
     // digitalWrite(LED, LOW);
@@ -812,7 +819,8 @@ void setup() {
     }
 
     // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-    Serial.println("Start updating " + type);
+    WebSerial.println("\nFirmware update");
+    WebSerial.println("\n\n");
     vTaskSuspend(canbus_task_handle); // suspend canbus task
   })
   .onEnd([]() {
