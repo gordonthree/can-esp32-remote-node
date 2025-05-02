@@ -47,13 +47,28 @@ uint16_t TRANSMIT_RATE_MS = 4000;
 #define UTC_OFFSET     0
 #define UTC_OFFSET_DST 0
 
+struct outputSwitch {
+  uint8_t  state;            // switch state on, off, momentary
+  uint8_t  mode;             // switch mode 0 toggle, 1 momentary, 2 blinking, 3 strobe, 4 pwm, 5 disabled
+  uint8_t  type;             // mosfet, relay, sink
+  uint8_t  featuresMask[2];  // feature mask
+  uint16_t pwmDuty;          // pwm duty cycle
+  uint16_t pwmFreq;          // pwm frequency
+  uint16_t blinkDelay;       // blink delay in tenths of a second
+  uint8_t  momPressDur;      // momentary press duration in ms
+  uint8_t  strobePat;        // strobe pattern
+  uint8_t  stateMemory;      // state memory
+  time_t   lastSeen;         // last time seen
+};
+
+struct outputSwitch nodeSwitch[8]; // list of switches
 // organize nodes 
 struct remoteNode {
-  uint8_t   nodeID[4]; // four byte node identifier 
-  uint16_t  nodeType; // first introduction type
-  uint16_t  subModules[4]; // introductions for up to four sub modules 
-  uint8_t   moduleCnt; // sub module count
-  uint32_t  lastSeen; // unix timestamp 
+  uint8_t  nodeID[4];      // four byte node identifier 
+  uint16_t nodeType;       // first introduction type
+  uint16_t subModules[4];  // introductions for up to four sub modules 
+  uint8_t  moduleCnt;      // sub module count
+  uint32_t lastSeen;       // unix timestamp 
 };
 
 struct remoteNode nodeList[8]; // list of remote nodes
@@ -64,17 +79,17 @@ unsigned long previousMillis = 0;  // will store last time a message was send
 
 static const char *TAG = "can_control";
 
-volatile uint8_t nodeSwitchState[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // switch state
-volatile uint8_t nodeSwitchMode[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // switch mode
+volatile uint8_t nodeSwitchState[8] = {0, 0, 0, 0, 0, 0, 0, 0};  // switch state
+volatile uint8_t nodeSwitchMode[8]  = {0, 0, 0, 0, 0, 0, 0, 0};  // switch mode
 
-volatile uint8_t testState[3] = {1, 0, 2}; // test state
-volatile uint8_t testPtr = 0; // test pointer
-volatile uint8_t testRestart = true; // set flag to true to restart test message squence
-
-volatile uint16_t introMsg[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // intro messages
-volatile uint8_t  introMsgPtr = 0; // intro message pointer
-volatile uint8_t  introMsgData[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // intro message data
-volatile uint8_t  introMsgCnt = 0; // intro message count
+volatile uint8_t testState[3]       = {1, 0, 2};                 // test state
+volatile uint8_t testPtr            = 0;                         // test pointer
+volatile uint8_t testRestart        = true;                      // set flag to true to restart test message squence
+  
+volatile uint16_t introMsg[8]       = {0, 0, 0, 0, 0, 0, 0, 0};  // intro messages  
+volatile uint8_t  introMsgPtr       = 0;                         // intro message pointer
+volatile uint8_t  introMsgData[8]   = {0, 0, 0, 0, 0, 0, 0, 0};  // intro message data
+volatile uint8_t  introMsgCnt       = 0;                         // intro message count
 
 #ifdef M5STACK
 const char* AP_SSID  = "m5stack-atom";
@@ -175,6 +190,37 @@ void WiFiEvent(WiFiEvent_t event){
  
 }
 
+// print list of switches and their attributes to the web console
+static void dumpSwitches() {
+  WebSerial.println(" ");
+  WebSerial.println(" ");
+  WebSerial.println("--------------------------------------------------------------------------");
+  WebSerial.println(" ");
+
+  WebSerial.printf("Switches:\n");
+  for (int i = 0; i < mySwitchCount; i++) {
+    WebSerial.printf("Switch %d: Last Update: %d\nState %d, Mode %d, Type %d, Feature Mask %02x:%02x, pwmDuty %d, pwmFreq %d, blinkDelay %d, momPressDur %d, strobePat %d\n",
+      i,
+      nodeSwitch[i].lastSeen,
+      nodeSwitch[i].state,
+      nodeSwitch[i].mode,
+      nodeSwitch[i].type,
+      nodeSwitch[i].featuresMask[0],
+      nodeSwitch[i].featuresMask[1],
+      nodeSwitch[i].pwmDuty,
+      nodeSwitch[i].pwmFreq,
+      nodeSwitch[i].blinkDelay,
+      nodeSwitch[i].momPressDur,
+      nodeSwitch[i].strobePat);
+  }
+  WebSerial.println("\n\nEnd of Switches");
+  WebSerial.println(" ");
+  WebSerial.println("--------------------------------------------------------------------------");
+  WebSerial.println(" ");
+  WebSerial.println(" ");
+
+}
+
 static void send_message(const uint16_t msgID, const uint8_t *msgData, const uint8_t dlc) {
   twai_message_t message;
   // static uint8_t dataBytes[] = {0, 0, 0, 0, 0, 0, 0, 0}; // initialize dataBytes array with 8 bytes of 0
@@ -224,48 +270,39 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
   // vTaskDelay(100);
 }
 
-static void rxDisplayMode(const uint8_t *data, const uint8_t displayMode) {
-  static uint8_t rxdisplayID = data[4]; // display id
-  WebSerial.printf("RX: Display: %d Mode: %d\n", rxdisplayID, displayMode);
-
-  switch (displayMode) {
-    case 0: // display off
-      break;
-    case 1: // display on
-      break;
-    case 2: // clear display
-      break;
-    case 3: // flash display
-      break;
-    default:
-      WebSerial.println("Invalid display mode");
-      break;
-  }
-}
-
 static void rxSwMomDur(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t swDuration = (data[5] << 8) | data[6]; // duration in ms
+  
+  nodeSwitch[switchID].momPressDur = swDuration; // update momentary press duration
 }
 
 static void rxSwBlinkDelay(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t swBlinkDelay = (data[5] << 8) | data[6]; // delay in ms 
+
+  nodeSwitch[switchID].blinkDelay = swBlinkDelay; // update blink delay
 }
 
 static void rxSwStrobePat(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint8_t swStrobePat = data[5]; // strobe pattern
+
+  nodeSwitch[switchID].strobePat = swStrobePat; // update strobe pattern
 }
 
 static void rxPWMDuty(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t PWMDuty = (data[5] << 8) | data[6]; // pwm duty cycle
+
+  nodeSwitch[switchID].pwmDuty = PWMDuty; // update pwm duty cycle
 }
 
 static void rxPWMFreq(uint8_t *data) {
   static uint8_t switchID = data[4]; // switch ID 
   static uint16_t PWMFreq = (data[5] << 8) | data[6]; // pwm frequency 
+
+  nodeSwitch[switchID].pwmFreq = PWMFreq; // update pwm frequency
 }
 
 static void rxSwitchState(const uint8_t *data, const uint8_t swState) {
@@ -273,8 +310,10 @@ static void rxSwitchState(const uint8_t *data, const uint8_t swState) {
   // static uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
   uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
 
-  WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
-  nodeSwitchState[switchID] = swState; // update switch state
+  // WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
+  // nodeSwitchState[switchID] = swState; // update switch buffer
+  nodeSwitch[switchID].state = swState; // update switch buffer
+  nodeSwitch[switchID].lastSeen = getEpoch(); // update last seen time
   
 
   switch (swState) {
@@ -285,7 +324,7 @@ static void rxSwitchState(const uint8_t *data, const uint8_t swState) {
       // send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
       break;
     case 2: // momentary press
-      send_message(DATA_OUTPUT_SWITCH_MOM_PUSH , dataBytes, sizeof(dataBytes));
+      // send_message(DATA_OUTPUT_SWITCH_MOM_PUSH , dataBytes, sizeof(dataBytes));
       // send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
       // send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
       break;
@@ -303,13 +342,14 @@ static void rxSwitchMode(const uint8_t *data) {
 
   WebSerial.printf("RX: Set Switch %d State %d\n", switchID, switchMode);
   // send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
-  nodeSwitchMode[switchID] = switchMode; // update switch mode
+  // nodeSwitchMode[switchID] = switchMode; // update switch mode
+  nodeSwitch[switchID].mode = switchMode; // update switch mode
+  nodeSwitch[switchID].lastSeen = getEpoch(); // update last seen time
 
 
   switch (switchMode) {
     case 0: // solid state (on/off)
       break;  
-    break;
     case 1: // one-shot momentary
       break;
     case 2: // blinking
@@ -317,6 +357,8 @@ static void rxSwitchMode(const uint8_t *data) {
     case 3: // strobing
       break;
     case 4: // pwm
+      break;
+    case 5: // disabled
       break;
     default:
       WebSerial.println("Invalid switch mode");
@@ -363,8 +405,8 @@ static void nodeCheckStatus() {
   }
 
   for (uint8_t switchID = 0; switchID < mySwitchCount; switchID++) {
-    uint8_t swState = nodeSwitchState[switchID]; // get switch state
-    uint8_t swMode = nodeSwitchMode[switchID]; // get switch mode
+    uint8_t swState = nodeSwitch[switchID].state; // get switch state
+    uint8_t swMode = nodeSwitch[switchID].mode; // get switch mode
     uint8_t stateData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
     uint8_t modeData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, swMode}; // send my own node ID, along with the switch number
       
@@ -379,8 +421,7 @@ static void nodeCheckStatus() {
         send_message(DATA_OUTPUT_SWITCH_ON, stateData, sizeof(stateData));
         break;
       case 2: // momentary press
-        // send_message(DATA_OUTPUT_SWITCH_ON, dataBytes, sizeof(dataBytes));
-        // send_message(DATA_OUTPUT_SWITCH_OFF, dataBytes, sizeof(dataBytes));
+        send_message(DATA_OUTPUT_SWITCH_MOM_PUSH, stateData, sizeof(stateData));
         break;
       default:
         break;
@@ -468,31 +509,6 @@ static void handle_rx_message(twai_message_t &message) {
       break;
     case SW_SET_STROBE_PAT:          // set output switch strobe pattern
       rxSwStrobePat(message.data);
-      break;
-    case SET_DISPLAY_OFF:          // set display off
-      rxDisplayMode(message.data, 0); 
-      break;
-    case SET_DISPLAY_ON:          // set display on
-      rxDisplayMode(message.data, 1); 
-      break;    
-    case SET_DISPLAY_CLEAR:          // clear display
-      rxDisplayMode(message.data, 2); 
-      break;
-    case SET_DISPLAY_FLASH:          // flash display
-      rxDisplayMode(message.data, 3); 
-      break;
-    case DATA_OUTPUT_SWITCH_OFF:          
-      // txSwitchState((uint8_t *)otherNodeID, 2, 1);
-      break;
-    case DATA_OUTPUT_SWITCH_ON:
-      // txSwitchState((uint8_t *)otherNodeID, 2, 2);
-      break;      
-    case DATA_OUTPUT_SWITCH_MOM_PUSH:
-      // txSwitchState((uint8_t *)otherNodeID, 2, 0);
-      // FLAG_BEGIN_NORMAL_OPER = false; // clear flag to halt normal operation
-      // vTaskDelay(10);
-      // txSendHalt((uint8_t *)otherNodeID); // send halt message to other node
-      // introMsgPtr = introMsgPtr + 1;
       break;
     case REQ_SWITCHBOX: // request for box introduction, kicks off the introduction sequence
       if (haveRXID) { // check if REQ message contains node id
@@ -735,6 +751,7 @@ void recvMsg(uint8_t *data, size_t len){
 
     
   if (d=="LIST"){
+    dumpSwitches();
     // dumpNodeList();
     // digitalWrite(LED, LOW);
   }
