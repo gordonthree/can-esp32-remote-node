@@ -48,17 +48,17 @@ uint16_t TRANSMIT_RATE_MS = 4000;
 #define UTC_OFFSET_DST 0
 
 struct outputSwitch {
-  uint8_t  state;            // switch state on, off, momentary
-  uint8_t  mode;             // switch mode 0 toggle, 1 momentary, 2 blinking, 3 strobe, 4 pwm, 5 disabled
-  uint8_t  type;             // mosfet, relay, sink
-  uint8_t  featuresMask[2];  // feature mask
-  uint16_t pwmDuty;          // pwm duty cycle
-  uint16_t pwmFreq;          // pwm frequency
-  uint16_t blinkDelay;       // blink delay in tenths of a second
-  uint8_t  momPressDur;      // momentary press duration in ms
-  uint8_t  strobePat;        // strobe pattern
-  uint8_t  stateMemory;      // state memory
-  time_t   lastSeen;         // last time seen
+  uint8_t  swState = 0;          // switch state on, off, momentary
+  uint8_t  swMode  = 0;          // switch mode 0 toggle, 1 momentary, 2 blinking, 3 strobe, 4 pwm, 5 disabled
+  uint8_t  swType  = 0;          // mosfet, relay, sink
+  uint8_t  featuresMask[2];    // feature mask
+  uint16_t pwmDuty = 20;       // pwm duty cycle
+  uint16_t pwmFreq = 1000;     // pwm frequency
+  uint16_t blinkDelay = 5000;  // blink delay in ms
+  uint16_t momPressDur = 500;  // momentary press duration in ms
+  uint8_t  strobePat = 1;      // strobe pattern
+  uint8_t  stateMemory = 1;    // state memory
+  time_t   lastSeen = 0;       // last time seen
 };
 
 struct outputSwitch nodeSwitch[8]; // list of switches
@@ -197,21 +197,25 @@ static void dumpSwitches() {
   WebSerial.println("--------------------------------------------------------------------------");
   WebSerial.println(" ");
 
-  WebSerial.printf("Switches:\n");
+  WebSerial.printf("Switches:\n\n\n");
   for (int i = 0; i < mySwitchCount; i++) {
-    WebSerial.printf("Switch %d: Last Update: %d\nState %d, Mode %d, Type %d, Feature Mask %02x:%02x, pwmDuty %d, pwmFreq %d, blinkDelay %d, momPressDur %d, strobePat %d\n",
-      i,
-      nodeSwitch[i].lastSeen,
-      nodeSwitch[i].state,
-      nodeSwitch[i].mode,
-      nodeSwitch[i].type,
+    WebSerial.printf("Switch %d: Last Update: %d\n", 
+      i, nodeSwitch[i].lastSeen);
+      
+    WebSerial.printf("State %d, Mode %d, Type %d, Feature Mask %02x:%02x\n",  
+      nodeSwitch[i].swState,
+      nodeSwitch[i].swMode,
+      nodeSwitch[i].swType,
       nodeSwitch[i].featuresMask[0],
-      nodeSwitch[i].featuresMask[1],
+      nodeSwitch[i].featuresMask[1]);
+      
+    WebSerial.printf("pwmDuty %d, pwmFreq %d, blinkDelay %d, momPressDur %d, strobePat %d\n\n",
       nodeSwitch[i].pwmDuty,
       nodeSwitch[i].pwmFreq,
       nodeSwitch[i].blinkDelay,
       nodeSwitch[i].momPressDur,
       nodeSwitch[i].strobePat);
+      
   }
   WebSerial.println("\n\nEnd of Switches");
   WebSerial.println(" ");
@@ -310,9 +314,9 @@ static void rxSwitchState(const uint8_t *data, const uint8_t swState) {
   // static uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
   uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
 
-  // WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
+  WebSerial.printf("RX: Set Switch %d State %d\n", switchID, swState);
   // nodeSwitchState[switchID] = swState; // update switch buffer
-  nodeSwitch[switchID].state = swState; // update switch buffer
+  nodeSwitch[switchID].swState = swState; // update switch buffer
   nodeSwitch[switchID].lastSeen = getEpoch(); // update last seen time
   
 
@@ -340,10 +344,10 @@ static void rxSwitchMode(const uint8_t *data) {
 
   uint8_t dataBytes[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, switchMode}; // send my own node ID, along with the switch number
 
-  WebSerial.printf("RX: Set Switch %d State %d\n", switchID, switchMode);
+  WebSerial.printf("RX: Set Switch %d Mode %d\n", switchID, switchMode);
   // send_message(DATA_OUTPUT_SWITCH_MODE, dataBytes, sizeof(dataBytes));    
   // nodeSwitchMode[switchID] = switchMode; // update switch mode
-  nodeSwitch[switchID].mode = switchMode; // update switch mode
+  nodeSwitch[switchID].swMode = switchMode; // update switch mode
   nodeSwitch[switchID].lastSeen = getEpoch(); // update last seen time
 
 
@@ -405,8 +409,8 @@ static void nodeCheckStatus() {
   }
 
   for (uint8_t switchID = 0; switchID < mySwitchCount; switchID++) {
-    uint8_t swState = nodeSwitch[switchID].state; // get switch state
-    uint8_t swMode = nodeSwitch[switchID].mode; // get switch mode
+    uint8_t swState = nodeSwitch[switchID].swState; // get switch state
+    uint8_t swMode = nodeSwitch[switchID].swMode; // get switch mode
     uint8_t stateData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID}; // send my own node ID, along with the switch number
     uint8_t modeData[] = {myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3], switchID, swMode}; // send my own node ID, along with the switch number
       
@@ -828,6 +832,9 @@ void setup() {
 
   ArduinoOTA
   .onStart([]() {
+    vTaskSuspend(canbus_task_handle); // suspend canbus task
+    WebSerial.println("\nFirmware update");
+    WebSerial.println("\n\n");
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
       type = "sketch";
@@ -836,9 +843,7 @@ void setup() {
     }
 
     // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-    WebSerial.println("\nFirmware update");
-    WebSerial.println("\n\n");
-    vTaskSuspend(canbus_task_handle); // suspend canbus task
+
   })
   .onEnd([]() {
     Serial.println("\nEnd");
