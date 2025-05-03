@@ -202,4 +202,4 @@ const uint8_t FEATURE_DISP_LCD[]                 = {0x80,0x48};  // feature mask
 #define BOX_MULTI_TVA 0x758      // temp, volt, current input box DLC 6
 #define BOX_SW_8RELAY 0x759      // 8-gang relay output box DLC 6
 #define BOX_MULTI_4X4IO 0x75A    // input - output box, 4 in, 4 out DLC 6
-        #endif                   // END CAN_MSG_ID_H
+#endif                   // END CAN_MSG_ID_H

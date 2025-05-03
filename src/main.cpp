@@ -4,20 +4,23 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+// Load FastLED
+#include <FastLED.h>
+
+
 // Load Wi-Fi networking
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <AsyncTCP.h>
 #include <ESPmDNS.h>
+#include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <ArduinoOTA.h>
 #include <WebSerial.h>
+#include <ArduinoOTA.h>
 #include <time.h>
 
 static AsyncWebServer server(80);
 
-// Load FastLED
-#include <FastLED.h>
+
 
 // Webserver and file system
 #define SPIFFS LittleFS
@@ -27,6 +30,7 @@ static AsyncWebServer server(80);
 
 // my wifi secrets
 #include "secrets.h"
+#include "jsonstring.h" // json string for testing
 
 // esp32 native TWAI / CAN library
 #include "driver/twai.h"
@@ -46,6 +50,24 @@ uint16_t TRANSMIT_RATE_MS = 4000;
 #define NTP_SERVER     "us.pool.ntp.org"
 #define UTC_OFFSET     0
 #define UTC_OFFSET_DST 0
+
+// ArduinoJson ESP32 Allocator
+struct SpiRamAllocator : ArduinoJson::Allocator {
+  void* allocate(size_t size) override {
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+  }
+
+  void deallocate(void* pointer) override {
+    heap_caps_free(pointer);
+  }
+
+  void* reallocate(void* ptr, size_t new_size) override {
+    return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM);
+  }
+};
+
+SpiRamAllocator allocator;
+JsonDocument doc;
 
 struct outputSwitch {
   uint8_t  swState = 0;          // switch state on, off, momentary
@@ -192,15 +214,11 @@ void WiFiEvent(WiFiEvent_t event){
 
 // print list of switches and their attributes to the web console
 static void dumpSwitches() {
-  WebSerial.println(" ");
-  WebSerial.println(" ");
-  WebSerial.println("--------------------------------------------------------------------------");
-  WebSerial.println(" ");
+  WebSerial.println("\n\n--------------------------------------------------------------------------\n");
 
-  WebSerial.printf("Switches:\n\n\n");
+  WebSerial.println("Switches:\n\n");
   for (int i = 0; i < mySwitchCount; i++) {
-    WebSerial.printf("Switch %d: Last Update: %d\n", 
-      i, nodeSwitch[i].lastSeen);
+    WebSerial.printf("Switch %d: Last Update: %d\n", i, nodeSwitch[i].lastSeen);
       
     WebSerial.printf("State %d, Mode %d, Type %d, Feature Mask %02x:%02x\n",  
       nodeSwitch[i].swState,
@@ -216,12 +234,10 @@ static void dumpSwitches() {
       nodeSwitch[i].momPressDur,
       nodeSwitch[i].strobePat);
       
+      delay(5);
   }
-  WebSerial.println("\n\nEnd of Switches");
-  WebSerial.println(" ");
-  WebSerial.println("--------------------------------------------------------------------------");
-  WebSerial.println(" ");
-  WebSerial.println(" ");
+  WebSerial.println("\n\nEnd of Switches\n");
+  WebSerial.println("--------------------------------------------------------------------------\n\n");
 
 }
 
@@ -695,6 +711,50 @@ void printWifi() {
   Serial.println(WiFi.localIP());
 }
 
+static void loadJSONConfig() {
+  WebSerial.println("Starting JSON Parsing...");
+
+  // Allocate the JsonDocument (use https://arduinojson.org/v6/assistant/ for sizing)
+  // StaticJsonDocument doc; // Increased buffer slightly from recommendation
+
+  // Deserialize the JSON input
+  DeserializationError error = deserializeJson(doc, jsonInput);
+
+  // Check for parsing errors
+  if (error) {
+    WebSerial.print("deserializeJson() failed: ");
+    WebSerial.println(error.c_str());
+    return; // Don't continue if parsing failed
+  }
+
+  WebSerial.print("Loading JSON into memory... ");
+
+  for (int i = 0; i <= 7; i++) {
+    String currentKey = String(i); // Keys are strings: "0", "1", ...
+
+    // Use doc[currentKey].is<JsonArray>() instead of containsKey()
+    if (doc[currentKey].is<JsonArray>()) {
+      JsonArray currentArray = doc[currentKey].as<JsonArray>();
+
+      nodeSwitch[i].swState = currentArray[0]; // Set switch state
+      nodeSwitch[i].swMode = currentArray[1]; // Set switch mode
+      nodeSwitch[i].swType = currentArray[2]; // Set switch type
+      nodeSwitch[i].featuresMask[0] = currentArray[3]; // Set feature mask byte 1
+      nodeSwitch[i].featuresMask[1] = currentArray[4]; // Set feature mask byte 2
+      nodeSwitch[i].pwmDuty = currentArray[5]; // Set PWM duty cycle
+      nodeSwitch[i].pwmFreq = currentArray[6]; // Set PWM frequency
+      nodeSwitch[i].blinkDelay = currentArray[7]; // Set blink delay
+      nodeSwitch[i].momPressDur = currentArray[8]; // Set momentary press duration
+      nodeSwitch[i].strobePat = currentArray[9]; // Set strobe pattern
+      nodeSwitch[i].stateMemory = currentArray[10]; // Set state memory
+      nodeSwitch[i].lastSeen = currentArray[11]; // Set last seen time
+
+    }
+  }
+  WebSerial.println("Finished!\n.\n");
+}
+
+
 
 void recvMsg(uint8_t *data, size_t len){
   WebSerial.println("Received Data...");
@@ -714,6 +774,13 @@ void recvMsg(uint8_t *data, size_t len){
   }
   if (d == "W"){
     printWifi();
+    // digitalWrite(LED, HIGH);
+  }
+
+  if (d == "LOAD"){
+    // vTaskSuspend(canbus_task_handle); // suspend canbus task
+    loadJSONConfig();
+    // vTaskSuspend(canbus_task_handle); // suspend canbus task
     // digitalWrite(LED, HIGH);
   }
 
@@ -751,8 +818,6 @@ void recvMsg(uint8_t *data, size_t len){
     WebSerial.printf("Node ID: %02x:%02x:%02x:%02x\n", myNodeID[0], myNodeID[1], myNodeID[2], myNodeID[3]);
     // digitalWrite(LED, HIGH);
   }
-
-
     
   if (d=="LIST"){
     dumpSwitches();
