@@ -20,8 +20,6 @@
 
 static AsyncWebServer server(80);
 
-
-
 // Webserver and file system
 #define SPIFFS LittleFS
 #include <LittleFS.h>
@@ -127,6 +125,14 @@ const char* hostname = "m5pico2";
 #define CAN_MY_TYPE BOX_SW_4GANG // 4 switch box
 const uint8_t* myNodeFeatureMask = FEATURE_BOX_SW_4GANG; // node feature mask
 const uint8_t mySwitchCount = 4;
+const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
+
+#elif M5PICO3
+const char* AP_SSID  = "m5pico3";
+const char* hostname = "m5pico3";
+#define CAN_MY_TYPE IFACE_6_AXIS_IMU // 6-axis IMU
+const uint8_t* myNodeFeatureMask = FEATURE_IFACE_6_AXIS_IMU; // node feature mask
+const uint8_t mySwitchCount = 0;
 const uint8_t otherNodeID[] = {0x25, 0x97, 0x51, 0x1C}; // M5PICO node id
 
 #else
@@ -537,6 +543,14 @@ static void handle_rx_message(twai_message_t &message) {
         FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
       }
       break;
+    case REQ_IFACE: // request for box introduction, kicks off the introduction sequence
+      if (haveRXID) { // check if REQ message contains node id
+        WebSerial.printf("RX: REQ IFACE Responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
+        introMsgPtr = 0; // reset intro message pointer
+        FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
+      }
+      break;
+
     case ACK_SWITCHBOX:
       if (msgFlag) { // message was sent to our ID
         if (introMsgPtr < introMsgCnt) {
@@ -547,7 +561,17 @@ static void handle_rx_message(twai_message_t &message) {
       }
       break;
     
-    default:
+      case ACK_IFACE:
+      if (msgFlag) { // message was sent to our ID
+        if (introMsgPtr < introMsgCnt) {
+          WebSerial.printf("RX: INTRO ACK %d\n", introMsgPtr);  
+          FLAG_SEND_INTRODUCTION = true; // keep sending introductions until all messages have been acknowledged
+          introMsgPtr = introMsgPtr + 1; // increment intro message pointer 1st step
+        }
+      }
+      break;
+
+      default:
  
       break;
   }
@@ -564,10 +588,14 @@ void TaskTWAI(void *pvParameters) {
   FastLED.show();
 
   // hardware acceptance filter
-  // filter 0x100:0x17f and 0x410:0x47f
+  // filter 0x700:0x77f and 0x410:0x47f
   // filter also contains DB1 of the node ID  
-  const uint16_t filterF1 = (0x100 << 5) | (myNodeID[0] >> 4);            
-  const uint16_t filterF2 = (0x400 << 5) | (myNodeID[0] & 0x0F);  
+  #ifdef M5PICO3
+  const uint16_t filterF1 = (0x700 << 5) | (myNodeID[0] >> 4);          // filter for interface specific messages  
+  #else
+  const uint16_t filterF1 = (0x100 << 5) | (myNodeID[0] >> 4);          // filter for switch control messages
+  #endif
+  uint16_t filterF2 = (0x400 << 5) | (myNodeID[0] & 0x0F);  
   // const uint32_t maskF1F2 = (uint32_t) 0xF00FF00F;
   const uint32_t maskF1F2 = (uint32_t) 0xFF00FF0;
 
@@ -842,6 +870,7 @@ void setup() {
   
   introMsgData[0] = 0; // send feature mask
   introMsgData[1] = 4; // four relays  
+
   #elif M5PICO2
   introMsgCnt = 3; // number of intro messages
   introMsgPtr = 0; // start at zero
@@ -852,6 +881,27 @@ void setup() {
   introMsgData[0] = 0x00; // send feature mask
   introMsgData[1] = 2; // two high current switches
   introMsgData[2] = 2; // two low current switches
+
+  #elif M5PICO3
+  introMsgCnt = 8; // number of intro messages
+  introMsgPtr = 0; // start at zero
+  introMsg[0] = (uint16_t) IFACE_6_AXIS_IMU; // intro message for 6 axis IMU
+  introMsg[1] = (uint16_t) IMU_X_AXIS_SENSOR; // intro message for IMU X axis
+  introMsg[2] = (uint16_t) IMU_Y_AXIS_SENSOR; // intro message for IMU Y axis
+  introMsg[3] = (uint16_t) IMU_Z_AXIS_SENSOR; // intro message for IMU Z axis
+  introMsg[4] = (uint16_t) IMU_X_GYRO_SENSOR; // intro message for IMU X gyro
+  introMsg[5] = (uint16_t) IMU_Y_GYRO_SENSOR; // intro message for IMU Y gyro
+  introMsg[6] = (uint16_t) IMU_Z_GYRO_SENSOR; // intro message for IMU Z gyro
+  introMsg[7] = (uint16_t) NODE_CPU_TEMP; // intro message for CPU temperature
+
+  introMsgData[0] = 0x00; // send feature mask
+  introMsgData[1] = 1; // no data yea
+  introMsgData[2] = 1; // no data yet
+  introMsgData[3] = 1; // no data yet
+  introMsgData[4] = 1; // no data yet
+  introMsgData[5] = 1; // no data yet
+  introMsgData[6] = 1; // no data yet
+  introMsgData[7] = 1; // no data yet
   #endif
 
 
