@@ -71,6 +71,8 @@ void ARDUINO_ISR_ATTR onTimer() {
 // Interval:
 uint16_t TRANSMIT_RATE_MS = 4000;
 #define POLLING_RATE_MS 100
+const uint64_t IMU_TIMER_US = 500000;  // update IMU data every 500ms
+
 
 // time stuff
 #define NTP_SERVER     "us.pool.ntp.org"
@@ -1021,7 +1023,7 @@ void setup() {
 
   // Set alarm to call onTimer function every second (value in microseconds).
   // Repeat the alarm (third parameter) with unlimited count = 0 (fourth parameter).
-  timerAlarm(timer, 1000000, true, 0); // 1hz maybe?
+  timerAlarm(timer, IMU_TIMER_US, true, 0); // 1hz maybe?
 
   #endif
 
