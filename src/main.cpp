@@ -40,6 +40,34 @@ TaskHandle_t canbus_task_handle = NULL; // task handle for canbus task
 
 #define CAN_SELF_MSG 0
 
+#ifdef M5PICO3
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+
+Adafruit_MPU6050 mpu;
+
+// Timer stuff
+hw_timer_t *timer = NULL;
+volatile SemaphoreHandle_t timerSemaphore;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+
+volatile bool timer0_flag = false; // flag for timer0 interrupt
+
+volatile uint32_t isrCounter = 0;
+volatile uint32_t lastIsrAt = 0;
+
+void ARDUINO_ISR_ATTR onTimer() {
+  // Increment the counter and set the time of ISR
+  portENTER_CRITICAL_ISR(&timerMux);
+  isrCounter = isrCounter + 1;
+  lastIsrAt = millis();
+  portEXIT_CRITICAL_ISR(&timerMux);
+  // Give a semaphore that we can check in the loop
+  xSemaphoreGiveFromISR(timerSemaphore, NULL);
+  // It is safe to use digitalRead/Write here if you want to toggle an output
+}
+
+#endif
 // Interval:
 uint16_t TRANSMIT_RATE_MS = 4000;
 #define POLLING_RATE_MS 1000
@@ -106,9 +134,9 @@ volatile uint8_t testState[3]       = {1, 0, 2};                 // test state
 volatile uint8_t testPtr            = 0;                         // test pointer
 volatile uint8_t testRestart        = true;                      // set flag to true to restart test message squence
   
-volatile uint16_t introMsg[8]       = {0, 0, 0, 0, 0, 0, 0, 0};  // intro messages  
+volatile uint16_t introMsg[9]       = {0, 0, 0, 0, 0, 0, 0, 0};  // intro messages  
 volatile uint8_t  introMsgPtr       = 0;                         // intro message pointer
-volatile uint8_t  introMsgData[8]   = {0, 0, 0, 0, 0, 0, 0, 0};  // intro message data
+volatile uint8_t  introMsgData[9]   = {0, 0, 0, 0, 0, 0, 0, 0};  // intro message data
 volatile uint8_t  introMsgCnt       = 0;                         // intro message count
 
 #ifdef M5STACK
@@ -157,6 +185,13 @@ unsigned long ota_progress_millis = 0;
 
 static volatile bool wifi_connected = false;
 static volatile uint8_t myNodeID[] = {0, 0, 0, 0}; // node ID
+
+// convert byte array into 32-bit integer
+static uint32_t unchunk32(const uint8_t* dataBytes){
+  static uint32_t result = ((dataBytes[0]<<24) || (dataBytes[1]<<16) || (dataBytes[2]<<8) || (dataBytes[3]));
+
+  return result;
+}
 
 // Function that gets current epoch time
 unsigned long getEpoch() {
@@ -251,9 +286,6 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
   twai_message_t message;
   // static uint8_t dataBytes[] = {0, 0, 0, 0, 0, 0, 0, 0}; // initialize dataBytes array with 8 bytes of 0
 
-  leds[0] = CRGB::Orange;
-  FastLED.show();
-
   // Format message
   message.identifier = msgID;       // set message ID
   message.extd = 0;                 // 0 = standard frame, 1 = extended frame
@@ -264,7 +296,7 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
   memcpy(message.data, (const uint8_t*) msgData, dlc);  // copy data to message data field 
   
   // Queue message for transmission
-  if (twai_transmit(&message, pdMS_TO_TICKS(3000)) == ESP_OK) {
+  if (twai_transmit(&message, pdMS_TO_TICKS(100)) == ESP_OK) {
     // ESP_LOGI(TAG, "Message queued for transmission\n");
     // WebSerial.printf("TX: MSG: %03x WITH %u DATA", msgID, dlc);
 
@@ -275,24 +307,18 @@ static void send_message(const uint16_t msgID, const uint8_t *msgData, const uin
     // }
     // WebSerial.printf("\n");
   } else {
-    leds[0] = CRGB::Red;
-    FastLED.show();
-    // ESP_LOGE(TAG, "Failed to queue message for transmission, initiating recovery");
-    WebSerial.printf("ERR: Failed to queue message for transmission, resetting controller\n");
+    ESP_LOGE(TAG, "Failed to queue message for transmission, initiating recovery");
+    // WebSerial.printf("ERR: Failed to queue message for transmission, resetting controller\n");
     twai_initiate_recovery();
     twai_stop();
-    WebSerial.printf("WARN: twai Stopped\n");
+    // WebSerial.printf("WARN: twai Stopped\n");
     vTaskDelay(500);
     twai_start();
-    WebSerial.printf("WARN: twai Started\n");
+    // WebSerial.printf("WARN: twai Started\n");
     // ESP_LOGI(TAG, "twai restarted\n");
     // wifiOnConnect();
     vTaskDelay(500);
-    leds[0] = CRGB::Black;
-    FastLED.show();
   }
-  leds[0] = CRGB::Black;
-  FastLED.show();
   // vTaskDelay(100);
 }
 
@@ -460,6 +486,7 @@ static void handle_rx_message(twai_message_t &message) {
   bool msgFlag = false;
   bool haveRXID = false; 
   int msgIDComp;
+  uint16_t msgID = message.identifier;
   uint8_t rxNodeID[4] = {0, 0, 0, 0}; // node ID
 
   leds[0] = CRGB::Orange;
@@ -498,7 +525,7 @@ static void handle_rx_message(twai_message_t &message) {
   }
 
 
-  switch (message.identifier) {
+  switch (msgID) {
     case MSG_NORM_OPER: // normal operation message
       WebSerial.printf("RX: Normal Operation Message\n");
       FLAG_BEGIN_NORMAL_OPER = true; // set flag to begin normal operation
@@ -536,22 +563,17 @@ static void handle_rx_message(twai_message_t &message) {
     case SW_SET_STROBE_PAT:          // set output switch strobe pattern
       rxSwStrobePat(message.data);
       break;
-    case REQ_SWITCHBOX: // request for box introduction, kicks off the introduction sequence
+
+
+    case REQ_NODE_INTRO: // request for box introduction, kicks off the introduction sequence
       if (haveRXID) { // check if REQ message contains node id
-        WebSerial.printf("RX: REQ BOX Responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
-        introMsgPtr = 0; // reset intro message pointer
-        FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
-      }
-      break;
-    case REQ_IFACE: // request for box introduction, kicks off the introduction sequence
-      if (haveRXID) { // check if REQ message contains node id
-        WebSerial.printf("RX: REQ IFACE Responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
+        WebSerial.printf("RX: REQ NODE responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
         introMsgPtr = 0; // reset intro message pointer
         FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
       }
       break;
 
-    case ACK_SWITCHBOX:
+    case ACK_INTRO:
       if (msgFlag) { // message was sent to our ID
         if (introMsgPtr < introMsgCnt) {
           WebSerial.printf("RX: INTRO ACK %d\n", introMsgPtr);  
@@ -561,18 +583,16 @@ static void handle_rx_message(twai_message_t &message) {
       }
       break;
     
-      case ACK_IFACE:
-      if (msgFlag) { // message was sent to our ID
-        if (introMsgPtr < introMsgCnt) {
-          WebSerial.printf("RX: INTRO ACK %d\n", introMsgPtr);  
-          FLAG_SEND_INTRODUCTION = true; // keep sending introductions until all messages have been acknowledged
-          introMsgPtr = introMsgPtr + 1; // increment intro message pointer 1st step
-        }
-      }
-      break;
 
       default:
- 
+        if (msgID == DATA_EPOCH) {
+          uint8_t epochBytes[4] = {message.data[0], message.data[1], message.data[2], message.data[3]};
+          uint32_t rxTime = 0;
+          rxTime = unchunk32(epochBytes);
+    
+          WebSerial.printf("RX: EPOCH TIME %u\n", rxTime);
+        }
+      
       break;
   }
 
@@ -591,13 +611,13 @@ void TaskTWAI(void *pvParameters) {
   // filter 0x700:0x77f and 0x410:0x47f
   // filter also contains DB1 of the node ID  
   #ifdef M5PICO3
-  const uint16_t filterF1 = (0x700 << 5) | (myNodeID[0] >> 4);          // filter for interface specific messages  
+  const uint16_t filterF1 = (MSG_CTRL_IFACE << 5) | (myNodeID[0] >> 4);          // filter for interface specific messages  
   #else
-  const uint16_t filterF1 = (0x100 << 5) | (myNodeID[0] >> 4);          // filter for switch control messages
+  const uint16_t filterF1 = (MSG_CTRL_SWITCHES << 5) | (myNodeID[0] >> 4);          // filter for switch control messages
   #endif
-  uint16_t filterF2 = (0x400 << 5) | (myNodeID[0] & 0x0F);  
+  uint16_t filterF2 = (MSG_REQ_INTRO << 5) | (myNodeID[0] & 0x0F);              // everything listens for 4xx messages
   // const uint32_t maskF1F2 = (uint32_t) 0xF00FF00F;
-  const uint32_t maskF1F2 = (uint32_t) 0xFF00FF0;
+  const uint32_t maskF1F2 = (uint32_t) 0xFF00FE0;
 
   // const uint16_t filterF1 = (0x110 << 5);            // 0x110:0x17f are switch control codse, 
   // const uint16_t filterF2 = (0x410 << 5);            // 0x410:0x47f are sub-module request codes,
@@ -860,6 +880,88 @@ void recvMsg(uint8_t *data, size_t len){
   }
 }
 
+// convert a 32-bit number into a 4 byte array
+char* chunk32(const uint32_t inVal = 0) {
+  static char tempStr[4] = {(inVal >> 24) && 0xFF, (inVal >> 16) && 0xFF, (inVal >>  8) && 0xFF, inVal && 0xFF};
+  return tempStr;
+}
+
+static void readIMU() {
+  /* Get new sensor events with the readings */
+  #ifdef M5PICO3
+  sensors_event_t a, g, temp;
+  
+  if (FLAG_BEGIN_NORMAL_OPER) { // only spew this data when we reach normal operation
+    // Read data from sensor
+    mpu.getEvent(&a, &g, &temp);
+    
+    /* Print out the values 
+    Serial.print("AccelX:");
+    Serial.print(a.acceleration.x);
+    Serial.print(",");
+    Serial.print("AccelY:");
+    Serial.print(a.acceleration.y);
+    Serial.print(",");
+    Serial.print("AccelZ:");
+    Serial.print(a.acceleration.z);
+    Serial.print(", ");
+    Serial.print("GyroX:");
+    Serial.print(g.gyro.x);
+    Serial.print(",");
+    Serial.print("GyroY:");
+    Serial.print(g.gyro.y);
+    Serial.print(",");
+    Serial.print("GyroZ:");
+    Serial.print(g.gyro.z);
+    Serial.println(""); */
+    
+    char buf0[8];
+    uint32_t xAccel = (uint32_t) a.acceleration.x * 1000; // convert to m/s^2
+    sprintf(buf0, "%s%s", (char*)myNodeID, (char*)chunk32(xAccel));
+    send_message(DATA_IMU_X_AXIS,(uint8_t*)buf0, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    char buf1[8];
+    uint32_t yAccel = (uint32_t) a.acceleration.y * 1000; // convert to m/s^2
+    sprintf(buf1, "%s%s", (char*)myNodeID, (char*)chunk32(yAccel));
+    send_message(DATA_IMU_Y_AXIS,(uint8_t*)buf1, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    char buf2[8];
+    uint32_t zAccel = (uint32_t) a.acceleration.z * 1000; // convert to m/s^2
+    sprintf(buf2, "%s%s", (char*)myNodeID, (char*)chunk32(zAccel));
+    send_message(DATA_IMU_Z_AXIS,(uint8_t*)buf2, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    char buf3[8];
+    uint32_t xGyro = (uint32_t) g.gyro.x * 1000; // convert to rad/s
+    sprintf(buf3, "%s%s", (char*)myNodeID, (char*)chunk32(xGyro));
+    send_message(DATA_IMU_X_GYRO,(uint8_t*)buf3, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    char buf4[8];
+    uint32_t yGyro = (uint32_t) g.gyro.y * 1000; // convert to rad/s
+    sprintf(buf4, "%s%s", (char*)myNodeID, (char*)chunk32(yGyro));
+    send_message(DATA_IMU_Y_GYRO,(uint8_t*)buf4, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    char buf5[8];
+    uint32_t zGyro = (uint32_t) g.gyro.z * 1000; // convert to rad/s
+    sprintf(buf5, "%s%s", (char*)myNodeID, (char*)chunk32(zGyro));
+    send_message(DATA_IMU_Z_GYRO,(uint8_t*)buf5, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    char buf6[8];
+    // float tempReading = temp.temperature;
+    uint32_t temp1000 = temp.temperature * 1000;
+    sprintf(buf6, "%s%s", (char*)myNodeID, (char*)chunk32(temp1000));
+    send_message(DATA_IMU_TEMPERATURE,(uint8_t*)buf6, 8);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+  }
+  #endif
+}
+
 void setup() {
 
   #ifdef M5STACK
@@ -883,16 +985,17 @@ void setup() {
   introMsgData[2] = 2; // two low current switches
 
   #elif M5PICO3
-  introMsgCnt = 8; // number of intro messages
+  introMsgCnt = 9; // number of intro messages
   introMsgPtr = 0; // start at zero
-  introMsg[0] = (uint16_t) IFACE_6_AXIS_IMU; // intro message for 6 axis IMU
+  introMsg[0] = (uint16_t) IFACE_6_AXIS_IMU;  // intro message for 6 axis IMU
   introMsg[1] = (uint16_t) IMU_X_AXIS_SENSOR; // intro message for IMU X axis
   introMsg[2] = (uint16_t) IMU_Y_AXIS_SENSOR; // intro message for IMU Y axis
   introMsg[3] = (uint16_t) IMU_Z_AXIS_SENSOR; // intro message for IMU Z axis
   introMsg[4] = (uint16_t) IMU_X_GYRO_SENSOR; // intro message for IMU X gyro
   introMsg[5] = (uint16_t) IMU_Y_GYRO_SENSOR; // intro message for IMU Y gyro
   introMsg[6] = (uint16_t) IMU_Z_GYRO_SENSOR; // intro message for IMU Z gyro
-  introMsg[7] = (uint16_t) NODE_CPU_TEMP; // intro message for CPU temperature
+  introMsg[7] = (uint16_t) IMU_TEMP_SENSOR;   // intro message for IMU temperature sensor
+  introMsg[8] = (uint16_t) NODE_CPU_TEMP;     // intro message for CPU temperature
 
   introMsgData[0] = 0x00; // send feature mask
   introMsgData[1] = 1; // no data yea
@@ -902,15 +1005,25 @@ void setup() {
   introMsgData[5] = 1; // no data yet
   introMsgData[6] = 1; // no data yet
   introMsgData[7] = 1; // no data yet
+  introMsgData[8] = 1; // no data yet
+
+  // Create semaphore to inform us when the timer has fired
+  timerSemaphore = xSemaphoreCreateBinary();
+
+  // Set timer frequency to 1Mhz
+  timer = timerBegin(1000000);
+
+  // Attach onTimer function to our timer.
+  timerAttachInterrupt(timer, &onTimer);
+
+  // Set alarm to call onTimer function every second (value in microseconds).
+  // Repeat the alarm (third parameter) with unlimited count = 0 (fourth parameter).
+  timerAlarm(timer, 1000000, true, 0); // 1hz maybe?
+
   #endif
 
 
   delay(5000);
-
-  // Timer0_Cfg = timerBegin(0, 80, true);
-  // timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
-  // timerAlarmWrite(Timer0_Cfg, 100000, true);
-  // timerAlarmEnable(Timer0_Cfg);
 
   xTaskCreatePinnedToCore(
     TaskTWAI,     // Task function.
@@ -936,9 +1049,12 @@ void setup() {
   leds[0] = CRGB::Black;
   FastLED.show();
 
-
-  Serial.begin(115200); // alternate serial port
+  #ifdef M5PICO3
+  Serial.begin(512000);
   Serial.setDebugOutput(true);
+  #else
+  Serial.begin(115200); // alternate serial port
+  #endif
  
   WiFi.onEvent(WiFiEvent);
   WiFi.mode(WIFI_MODE_APSTA);
@@ -1013,9 +1129,30 @@ void setup() {
   configTime(UTC_OFFSET, UTC_OFFSET_DST, NTP_SERVER);
 
   FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
+
+  #ifdef M5PICO3
+  mpu.begin();
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  #endif
 }
 
 void loop() {
+  #ifdef M5PICO3
+  // If Timer has fired
+  if (xSemaphoreTake(timerSemaphore, 0) == pdTRUE) {
+    uint32_t isrCount = 0, isrTime = 0;
+    // Read the interrupt count and time
+    portENTER_CRITICAL(&timerMux);
+    isrCount = isrCounter;
+    isrTime = lastIsrAt;
+    portEXIT_CRITICAL(&timerMux);
+    readIMU();
+  }
+  #endif
+  // Check the flag set by the ISR
+  vTaskDelay(pdMS_TO_TICKS(10));
   ArduinoOTA.handle();
-  // NOP;
+
 }
