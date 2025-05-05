@@ -70,7 +70,7 @@ void ARDUINO_ISR_ATTR onTimer() {
 #endif
 // Interval:
 uint16_t TRANSMIT_RATE_MS = 4000;
-#define POLLING_RATE_MS 1000
+#define POLLING_RATE_MS 100
 
 // time stuff
 #define NTP_SERVER     "us.pool.ntp.org"
@@ -505,25 +505,9 @@ static void handle_rx_message(twai_message_t &message) {
     }
   }
 
-
   // if ((!msgFlag) && (message.identifier <= 0x17F)) { // switch control message but not for us
   //   return; // exit function
   // } 
-
-  if (message.data_length_code > 0) { // message contains data, check if it is for us
-    if (msgFlag) {
-      // WebSerial.printf("RX: MATCH MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
-    } else {
-      WebSerial.printf("RX: NO MATCH MSG: %03x DATA: u%\n", message.identifier, message.data_length_code);
-    }
-  } else {
-    if (msgFlag) {
-      // WebSerial.printf("RX: MATCH MSG: %03x NO DATA\n", message.identifier);
-    } else {
-      WebSerial.printf("RX: NO MATCH MSG: %03x NO DATA\n", message.identifier);
-    } 
-  }
-
 
   switch (msgID) {
     case MSG_NORM_OPER: // normal operation message
@@ -567,7 +551,7 @@ static void handle_rx_message(twai_message_t &message) {
 
     case REQ_NODE_INTRO: // request for box introduction, kicks off the introduction sequence
       if (haveRXID) { // check if REQ message contains node id
-        WebSerial.printf("RX: REQ NODE responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
+        // WebSerial.printf("RX: REQ NODE responding to %02x:%02x:%02x:%02x\n", rxNodeID[0], rxNodeID[1], rxNodeID[2], rxNodeID[3]);
         introMsgPtr = 0; // reset intro message pointer
         FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
       }
@@ -592,6 +576,21 @@ static void handle_rx_message(twai_message_t &message) {
     
           WebSerial.printf("RX: EPOCH TIME %u\n", rxTime);
         }
+
+        if (message.data_length_code > 0) { // message contains data, check if it is for us
+          if (msgFlag) {
+            // WebSerial.printf("RX: MATCH MSG: %03x DATA: %u\n", message.identifier, message.data_length_code);
+          } else {
+            WebSerial.printf("RX: NO MATCH MSG: %03x DATA: u%\n", message.identifier, message.data_length_code);
+          }
+        } else {
+          if (msgFlag) {
+            // WebSerial.printf("RX: MATCH MSG: %03x NO DATA\n", message.identifier);
+          } else {
+            WebSerial.printf("RX: NO MATCH MSG: %03x NO DATA\n", message.identifier);
+          } 
+        }
+      
       
       break;
   }
@@ -813,6 +812,7 @@ void recvMsg(uint8_t *data, size_t len){
   WebSerial.println(d);
 
   if (d == "C0"){
+    FLAG_BEGIN_NORMAL_OPER = false;
     vTaskSuspend(canbus_task_handle); // suspend canbus task
     // digitalWrite(LED, HIGH);
   }
@@ -915,48 +915,51 @@ static void readIMU() {
     Serial.print(g.gyro.z);
     Serial.println(""); */
     
-    char buf0[8];
-    uint32_t xAccel = (uint32_t) a.acceleration.x * 1000; // convert to m/s^2
-    sprintf(buf0, "%s%s", (char*)myNodeID, (char*)chunk32(xAccel));
-    send_message(DATA_IMU_X_AXIS,(uint8_t*)buf0, 8);
+    char buf0[CAN_MAX_DLC] = {'\0'};
+    // sprintf(buf0, "%s%s", (char*)myNodeID, (char*)chunk32(xAccel));
+    // float xAccel = a.acceleration.x * 1000; // convert to m/s^2
+    dtostrf(a.acceleration.x, 1, 3, buf0);
+    send_message(DATA_IMU_X_AXIS,(uint8_t*)buf0, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    char buf1[8];
-    uint32_t yAccel = (uint32_t) a.acceleration.y * 1000; // convert to m/s^2
-    sprintf(buf1, "%s%s", (char*)myNodeID, (char*)chunk32(yAccel));
-    send_message(DATA_IMU_Y_AXIS,(uint8_t*)buf1, 8);
+    char buf1[CAN_MAX_DLC] = {'\0'};
+    // uint32_t yAccel = (uint32_t) a.acceleration.y * 1000; // convert to m/s^2
+    // sprintf(buf1, "%s%s", (char*)myNodeID, (char*)chunk32(yAccel));
+    dtostrf(a.acceleration.y, 1, 3, buf1);
+    send_message(DATA_IMU_Y_AXIS,(uint8_t*)buf1, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    char buf2[8];
-    uint32_t zAccel = (uint32_t) a.acceleration.z * 1000; // convert to m/s^2
-    sprintf(buf2, "%s%s", (char*)myNodeID, (char*)chunk32(zAccel));
-    send_message(DATA_IMU_Z_AXIS,(uint8_t*)buf2, 8);
+    char buf2[CAN_MAX_DLC] = {'\0'};
+    dtostrf(a.acceleration.z, 1, 3, buf2);
+    send_message(DATA_IMU_Z_AXIS,(uint8_t*)buf2, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    char buf3[8];
-    uint32_t xGyro = (uint32_t) g.gyro.x * 1000; // convert to rad/s
-    sprintf(buf3, "%s%s", (char*)myNodeID, (char*)chunk32(xGyro));
-    send_message(DATA_IMU_X_GYRO,(uint8_t*)buf3, 8);
+    char buf3[CAN_MAX_DLC] = {'\0'};
+    // uint32_t xGyro = (uint32_t) g.gyro.x * 1000; // convert to rad/s
+    // sprintf(buf3, "%s%s", (char*)myNodeID, (char*)chunk32(xGyro));
+    dtostrf(g.gyro.x, 1, 3, buf3);
+    send_message(DATA_IMU_X_GYRO,(uint8_t*)buf3, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    char buf4[8];
-    uint32_t yGyro = (uint32_t) g.gyro.y * 1000; // convert to rad/s
-    sprintf(buf4, "%s%s", (char*)myNodeID, (char*)chunk32(yGyro));
-    send_message(DATA_IMU_Y_GYRO,(uint8_t*)buf4, 8);
+    char buf4[CAN_MAX_DLC] = {'\0'};
+    // uint32_t yGyro = (uint32_t) g.gyro.y * 1000; // convert to rad/s
+    // sprintf(buf4, "%s%s", (char*)myNodeID, (char*)chunk32(yGyro));
+    dtostrf(g.gyro.y, 1, 3, buf4);
+    send_message(DATA_IMU_Y_GYRO,(uint8_t*)buf4, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    char buf5[8];
-    uint32_t zGyro = (uint32_t) g.gyro.z * 1000; // convert to rad/s
-    sprintf(buf5, "%s%s", (char*)myNodeID, (char*)chunk32(zGyro));
-    send_message(DATA_IMU_Z_GYRO,(uint8_t*)buf5, 8);
+    char buf5[CAN_MAX_DLC] = {'\0'};
+    // uint32_t zGyro = (uint32_t) g.gyro.z * 1000; // convert to rad/s
+    // sprintf(buf5, "%s%s", (char*)myNodeID, (char*)chunk32(zGyro));
+    dtostrf(g.gyro.z, 1, 3, buf5);
+    send_message(DATA_IMU_Z_GYRO,(uint8_t*)buf5, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    char buf6[8];
-    // float tempReading = temp.temperature;
-    uint32_t temp1000 = temp.temperature * 1000;
-    sprintf(buf6, "%s%s", (char*)myNodeID, (char*)chunk32(temp1000));
-    send_message(DATA_IMU_TEMPERATURE,(uint8_t*)buf6, 8);
+    char buf6[CAN_MAX_DLC] = {'\0'};
+    dtostrf(temp.temperature, 1, 3, buf6);
+    send_message(DATA_IMU_TEMPERATURE,(uint8_t*)buf6, CAN_MAX_DLC);
     vTaskDelay(pdMS_TO_TICKS(5));
+
 
   }
   #endif
@@ -1128,7 +1131,9 @@ void setup() {
 
   configTime(UTC_OFFSET, UTC_OFFSET_DST, NTP_SERVER);
 
+  #ifndef M5PICO3  // other nodes start announcements after boot, IMU waits for controller to ask
   FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
+  #endif
 
   #ifdef M5PICO3
   mpu.begin();
