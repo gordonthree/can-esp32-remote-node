@@ -114,9 +114,9 @@ struct outputSwitch {
 struct outputSwitch nodeSwitch[8]; // list of switches
 // organize nodes 
 struct remoteNode {
-  uint8_t  nodeID[4];      // four byte node identifier 
+  uint8_t  nodeID[NODE_ID_SIZE];      // four byte node identifier 
   uint16_t nodeType;       // first introduction type
-  uint16_t subModules[4];  // introductions for up to four sub modules 
+  uint16_t subModules[8];  // introductions for up to 8 sub modules 
   uint8_t  moduleCnt;      // sub module count
   uint32_t lastSeen;       // unix timestamp 
 };
@@ -422,7 +422,8 @@ static void rxSwitchMode(const uint8_t *data) {
 
 // send an introduction message to the bus
 // static void txIntroduction(const uint8_t* txNodeID, const uint8_t* txNodeFeatureMask, const uint_8t txMsgData, const uint16_t txmsgID, const uint8_t ptr) {
-static void txIntroduction(uint8_t* txNodeID, uint8_t* txNodeFeatureMask, uint8_t txMsgData, uint16_t txmsgID, uint8_t ptr) {
+static void txIntroduction(uint8_t* txNodeID, uint8_t* txNodeFeatureMask, 
+                           uint8_t txMsgData, uint16_t txmsgID, uint8_t ptr) {
      WebSerial.printf("TX: INTRO PTR %d\n", ptr);    
 
     if (txmsgID < 1) {
@@ -433,12 +434,10 @@ static void txIntroduction(uint8_t* txNodeID, uint8_t* txNodeFeatureMask, uint8_
     if (ptr == 0) {
       uint8_t dataBytes[6] = { txNodeID[0], txNodeID[1], txNodeID[2], txNodeID[3], 
                                txNodeFeatureMask[0], txNodeFeatureMask[1] }; 
-
-      send_message(txmsgID, dataBytes, 6);
+      send_message(txmsgID, dataBytes, sizeof(dataBytes));
     } else {
       uint8_t dataBytes[5] = { txNodeID[0], txNodeID[1], txNodeID[2], txNodeID[3], txMsgData }; 
-
-      send_message(txmsgID, dataBytes, 5);
+      send_message(txmsgID, dataBytes, sizeof(dataBytes));
     }
 }
 
@@ -489,7 +488,7 @@ static void handle_rx_message(twai_message_t &message) {
   bool haveRXID = false; 
   int msgIDComp;
   uint16_t msgID = message.identifier;
-  uint8_t rxNodeID[4] = {0, 0, 0, 0}; // node ID
+  uint8_t rxNodeID[NODE_ID_SIZE] = {0, 0, 0, 0}; // node ID
 
   leds[0] = CRGB::Orange;
   FastLED.show();
